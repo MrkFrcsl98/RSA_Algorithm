@@ -2,215 +2,347 @@
 #include <gmpxx.h>
 #include <vector>
 #include <string>
-#include <random>
-#include <ctime>
-#include <stdexcept>
 #include <sstream>
-#include <iostream>
+#include <fstream>
+#include <stdexcept>
 #include <iomanip>
+#include <iterator>
+#include <ctime>
+#include <type_traits>
+#include <algorithm>
+#include <stdint.h>
 
-namespace RSA_Cipher
-{
+namespace RSA_Cipher {
 
-// Helper: mpz_class <-> std::vector<uint8_t>
-inline std::vector<uint8_t> mpz_to_bytes(const mpz_class &value) {
-    size_t count = (mpz_sizeinbase(value.get_mpz_t(), 2) + 7) / 8;
-    std::vector<uint8_t> bytes(count ? count : 1, 0);
-    mpz_export(bytes.data(), &count, 1, 1, 1, 0, value.get_mpz_t());
-    if (bytes.empty()) bytes.push_back(0);
-    // Remove leading zeros
-    while(bytes.size() > 1 && bytes[0] == 0)
-        bytes.erase(bytes.begin());
-    return bytes;
-}
-inline mpz_class bytes_to_mpz(const std::vector<uint8_t> &bytes) {
-    mpz_class value;
-    mpz_import(value.get_mpz_t(), bytes.size(), 1, 1, 1, 0, bytes.data());
-    return value;
-}
+enum class KeySize {
+    Bits1024 = 1024,
+    Bits2048 = 2048,
+    Bits3072 = 3072,
+    Bits4096 = 4096
+};
 
-// PEM/DER logic
-namespace detail
-{
-inline std::vector<uint8_t> encode_asn1_integer(const std::vector<uint8_t> &value)
-{
-    std::vector<uint8_t> val = value;
-    if (!val.empty() && (val[0] & 0x80))
-        val.insert(val.begin(), 0x00);
-    std::vector<uint8_t> out = {0x02};
-    if (val.size() < 128)
-        out.push_back(static_cast<uint8_t>(val.size()));
-    else
-    {
-        size_t len = val.size();
-        std::vector<uint8_t> len_bytes;
-        while (len)
-        {
-            len_bytes.insert(len_bytes.begin(), len & 0xFF);
-            len >>= 8;
-        }
-        out.push_back(0x80 | len_bytes.size());
-        out.insert(out.end(), len_bytes.begin(), len_bytes.end());
-    }
-    out.insert(out.end(), val.begin(), val.end());
-    return out;
-}
-inline std::vector<uint8_t> encode_asn1_sequence(const std::vector<std::vector<uint8_t>> &elements)
-{
-    std::vector<uint8_t> content;
-    for (const auto &e : elements)
-        content.insert(content.end(), e.begin(), e.end());
-    std::vector<uint8_t> out = {0x30};
-    if (content.size() < 128)
-        out.push_back(static_cast<uint8_t>(content.size()));
-    else
-    {
-        size_t len = content.size();
-        std::vector<uint8_t> len_bytes;
-        while (len)
-        {
-            len_bytes.insert(len_bytes.begin(), len & 0xFF);
-            len >>= 8;
-        }
-        out.push_back(0x80 | len_bytes.size());
-        out.insert(out.end(), len_bytes.begin(), len_bytes.end());
-    }
-    out.insert(out.end(), content.begin(), content.end());
-    return out;
-}
-inline std::string base64_encode(const std::vector<uint8_t> &data)
-{
-    static const char *base64_chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    std::string out;
-    int val = 0, valb = -6;
-    for (uint8_t c : data)
-    {
-        val = (val << 8) + c;
-        valb += 8;
-        while (valb >= 0)
-        {
-            out.push_back(base64_chars[(val >> valb) & 0x3F]);
-            valb -= 6;
-        }
-    }
-    if (valb > -6)
-        out.push_back(base64_chars[((val << 8) >> (valb + 8)) & 0x3F]);
-    while (out.size() % 4)
-        out.push_back('=');
-    return out;
-}
-inline std::string wrap_pem(const std::string &b64, const std::string &type)
-{
-    std::string out = "-----BEGIN " + type + "-----\n";
-    for (size_t i = 0; i < b64.size(); i += 64)
-        out += b64.substr(i, 64) + "\n";
-    out += "-----END " + type + "-----\n";
-    return out;
-}
-} // namespace detail
+enum class OutputFormat {
+    HEX,
+    BASE64,
+    RAW,
+    BIN
+};
 
-// Random prime generation using GMP
-inline mpz_class random_prime(int bits, gmp_randclass &rng) {
-    mpz_class p;
-    while (true) {
-        p = rng.get_z_bits(bits);
-        mpz_setbit(p.get_mpz_t(), bits - 1); // ensure top bit set
-        mpz_setbit(p.get_mpz_t(), 0);        // ensure odd
-        if (mpz_probab_prime_p(p.get_mpz_t(), 25)) // 25 rounds for good confidence
-            return p;
-    }
-}
-
-// Modular inverse using GMP (already exists as mpz_invert)
-inline mpz_class modinv(const mpz_class &a, const mpz_class &m) {
-    mpz_class inv;
-    if (mpz_invert(inv.get_mpz_t(), a.get_mpz_t(), m.get_mpz_t()) == 0)
-        throw std::runtime_error("No modular inverse exists");
-    return inv;
-}
-
-// Modular exponentiation using GMP (already exists as mpz_powm)
-inline mpz_class powm(const mpz_class &base, const mpz_class &exp, const mpz_class &mod) {
-    mpz_class result;
-    mpz_powm(result.get_mpz_t(), base.get_mpz_t(), exp.get_mpz_t(), mod.get_mpz_t());
-    return result;
-}
-
-// ====== RSA Class ======
-class RSA
-{
+class RSAUtils {
 public:
-    mpz_class n, e, d, p, q, dp, dq, qinv;
+    // GMP <-> bytes
+    static std::vector<uint8_t> mpz_to_bytes(const mpz_class &value) {
+        size_t count = (mpz_sizeinbase(value.get_mpz_t(), 2) + 7) / 8;
+        std::vector<uint8_t> bytes(count ? count : 1, 0);
+        mpz_export(bytes.data(), &count, 1, 1, 1, 0, value.get_mpz_t());
+        if (bytes.empty()) bytes.push_back(0);
+        while (bytes.size() > 1 && bytes[0] == 0)
+            bytes.erase(bytes.begin());
+        return bytes;
+    }
+    static mpz_class bytes_to_mpz(const std::vector<uint8_t> &bytes) {
+        mpz_class value;
+        mpz_import(value.get_mpz_t(), bytes.size(), 1, 1, 1, 0, bytes.data());
+        return value;
+    }
+    // Base64 helpers
+    static std::string base64_encode(const std::vector<uint8_t>& in) {
+        static const char* b64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        std::string out;
+        int val = 0, valb = -6;
+        for (uint8_t c : in) {
+            val = (val << 8) + c;
+            valb += 8;
+            while (valb >= 0) {
+                out.push_back(b64[(val >> valb) & 0x3F]);
+                valb -= 6;
+            }
+        }
+        if (valb > -6) out.push_back(b64[((val << 8) >> (valb + 8)) & 0x3F]);
+        while (out.size() % 4) out.push_back('=');
+        return out;
+    }
+    static std::vector<uint8_t> base64_decode(const std::string& in) {
+        static const std::string b64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        std::vector<uint8_t> out;
+        std::vector<int> T(256, -1);
+        for (int i = 0; i < 64; i++) T[b64[i]] = i;
+        int val = 0, valb = -8;
+        for (uint8_t c : in) {
+            if (T[c] == -1) break;
+            val = (val << 6) + T[c];
+            valb += 6;
+            if (valb >= 0) {
+                out.push_back(uint8_t((val >> valb) & 0xFF));
+                valb -= 8;
+            }
+        }
+        return out;
+    }
+    // Hex helpers
+    static std::string bytes_to_hex(const std::vector<uint8_t>& data) {
+        std::ostringstream oss;
+        for (auto b : data)
+            oss << std::hex << std::setw(2) << std::setfill('0') << (int)b;
+        return oss.str();
+    }
+    static std::vector<uint8_t> hex_to_bytes(const std::string& hex) {
+        std::vector<uint8_t> bytes;
+        for (size_t i = 0; i < hex.size(); i += 2)
+            bytes.push_back((uint8_t)std::stoi(hex.substr(i, 2), nullptr, 16));
+        return bytes;
+    }
+    // File helpers
+    static std::vector<uint8_t> read_file(const std::string& filename) {
+        std::ifstream file(filename, std::ios::binary);
+        if (!file) throw std::runtime_error("Cannot open file for read: " + filename);
+        return std::vector<uint8_t>((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    }
+    static void write_file(const std::string& filename, const std::vector<uint8_t>& data) {
+        std::ofstream file(filename, std::ios::binary);
+        if (!file) throw std::runtime_error("Cannot open file for write: " + filename);
+        file.write(reinterpret_cast<const char*>(data.data()), data.size());
+    }
+    static bool file_exists(const std::string& filename) {
+        std::ifstream f(filename, std::ios::binary);
+        return f.good();
+    }
+    // Math
+    static mpz_class random_prime(int bits, gmp_randclass& rng) {
+        mpz_class p;
+        while (true) {
+            p = rng.get_z_bits(bits);
+            mpz_setbit(p.get_mpz_t(), bits - 1);
+            mpz_setbit(p.get_mpz_t(), 0);
+            if (mpz_probab_prime_p(p.get_mpz_t(), 25))
+                return p;
+        }
+    }
+    static mpz_class modinv(const mpz_class& a, const mpz_class& m) {
+        mpz_class inv;
+        if (mpz_invert(inv.get_mpz_t(), a.get_mpz_t(), m.get_mpz_t()) == 0)
+            throw std::runtime_error("No modular inverse exists");
+        return inv;
+    }
+    static mpz_class powm(const mpz_class& base, const mpz_class& exp, const mpz_class& mod) {
+        mpz_class result;
+        mpz_powm(result.get_mpz_t(), base.get_mpz_t(), exp.get_mpz_t(), mod.get_mpz_t());
+        return result;
+    }
+};
 
-    RSA(int bits = 2048)
-    {
-        // Use the current time as the seed for randomness
+// -- Key Classes --
+
+class RSAPublicKey {
+public:
+    mpz_class n, e;
+    RSAPublicKey() = default;
+    RSAPublicKey(const mpz_class& n_, const mpz_class& e_) : n(n_), e(e_) {}
+};
+
+class RSAPrivateKey {
+public:
+    mpz_class n, e, d;
+    RSAPrivateKey() = default;
+    RSAPrivateKey(const mpz_class& n_, const mpz_class& e_, const mpz_class& d_)
+        : n(n_), e(e_), d(d_) {}
+};
+
+struct RSAKeyPair {
+    RSAPublicKey public_key;
+    RSAPrivateKey private_key;
+};
+
+class RSAKeyGenerator {
+public:
+    static RSAKeyPair generate(KeySize bits = KeySize::Bits2048) {
+        int num_bits = static_cast<int>(bits);
+        if (num_bits < 512) throw std::runtime_error("Key size too small");
         gmp_randclass rng(gmp_randinit_mt);
         rng.seed(static_cast<unsigned long>(std::time(nullptr)));
 
-        p = random_prime(bits / 2, rng);
-        do { q = random_prime(bits / 2, rng); } while (q == p);
-        n = p * q;
+        mpz_class p = RSAUtils::random_prime(num_bits / 2, rng), q;
+        do { q = RSAUtils::random_prime(num_bits / 2, rng); } while (q == p);
+        mpz_class n = p * q;
         mpz_class phi = (p - 1) * (q - 1);
-        e = 65537;
-        d = modinv(e, phi);
-        dp = d % (p - 1);
-        dq = d % (q - 1);
-        qinv = modinv(q, p);
-    }
+        mpz_class e = 65537;
+        mpz_class d = RSAUtils::modinv(e, phi);
 
-    std::vector<mpz_class> encrypt(const std::vector<uint8_t> &message) const
-    {
+        return { RSAPublicKey(n, e), RSAPrivateKey(n, e, d) };
+    }
+};
+
+// -- Encryption/Decryption Result Classes --
+
+class RSAEncryptionResult {
+    std::vector<mpz_class> ciphertext;
+public:
+    RSAEncryptionResult(std::vector<mpz_class>&& ct) : ciphertext(std::move(ct)) {}
+
+    // Hex string, each block space-separated
+    std::string asHex() const {
+        std::ostringstream oss;
+        for (size_t i = 0; i < ciphertext.size(); ++i) {
+            if (i) oss << " ";
+            oss << ciphertext[i].get_str(16);
+        }
+        return oss.str();
+    }
+    // Base64 of concatenated bytes of all blocks
+    std::string asBase64() const {
+        std::vector<uint8_t> all_bytes;
+        for (const auto& block : ciphertext) {
+            auto bytes = RSAUtils::mpz_to_bytes(block);
+            all_bytes.insert(all_bytes.end(), bytes.begin(), bytes.end());
+        }
+        return RSAUtils::base64_encode(all_bytes);
+    }
+    // Raw bytes (concatenated blocks, no separators)
+    std::vector<uint8_t> asRaw() const {
+        std::vector<uint8_t> all_bytes;
+        for (const auto& block : ciphertext) {
+            auto bytes = RSAUtils::mpz_to_bytes(block);
+            all_bytes.insert(all_bytes.end(), bytes.begin(), bytes.end());
+        }
+        return all_bytes;
+    }
+    // Vector of mpz_class blocks (for feed into decrypt)
+    const std::vector<mpz_class>& asVector() const { return ciphertext; }
+    // Save as hex to file
+    void saveHexToFile(const std::string& filename) const {
+        std::ofstream out(filename);
+        if (!out) throw std::runtime_error("Cannot write ciphertext file: " + filename);
+        out << asHex();
+    }
+    // Save as base64 to file
+    void saveBase64ToFile(const std::string& filename) const {
+        std::ofstream out(filename);
+        if (!out) throw std::runtime_error("Cannot write ciphertext file: " + filename);
+        out << asBase64();
+    }
+    // Save as raw bytes to file
+    void saveRawToFile(const std::string& filename) const {
+        RSAUtils::write_file(filename, asRaw());
+    }
+};
+
+class RSADecryptionResult {
+    std::vector<uint8_t> plaintext;
+public:
+    RSADecryptionResult(std::vector<uint8_t>&& pt) : plaintext(std::move(pt)) {}
+
+    // As string
+    std::string asString() const {
+        return std::string(plaintext.begin(), plaintext.end());
+    }
+    // As hex
+    std::string asHex() const {
+        return RSAUtils::bytes_to_hex(plaintext);
+    }
+    // As base64
+    std::string asBase64() const {
+        return RSAUtils::base64_encode(plaintext);
+    }
+    // As raw vector
+    const std::vector<uint8_t>& asVector() const { return plaintext; }
+    // Save to file
+    void saveToFile(const std::string& filename) const {
+        RSAUtils::write_file(filename, plaintext);
+    }
+};
+
+// -- Encryptor/Decryptor --
+
+class RSAEncryptor {
+    const RSAPublicKey& pub;
+public:
+    explicit RSAEncryptor(const RSAPublicKey& pub_) : pub(pub_) {}
+    RSAEncryptionResult encrypt(const std::string& message_or_filename) const {
+        if (RSAUtils::file_exists(message_or_filename)) {
+            auto data = RSAUtils::read_file(message_or_filename);
+            return encrypt(data);
+        }
+        std::vector<uint8_t> message(message_or_filename.begin(), message_or_filename.end());
+        return encrypt(message);
+    }
+    RSAEncryptionResult encrypt(const std::vector<uint8_t>& message) const {
         std::vector<mpz_class> ciphertexts;
         for (uint8_t c : message)
-            ciphertexts.push_back(powm(c, e, n));
-        return ciphertexts;
+            ciphertexts.push_back(RSAUtils::powm(c, pub.e, pub.n));
+        return RSAEncryptionResult(std::move(ciphertexts));
     }
-
-    std::vector<uint8_t> decrypt(const std::vector<mpz_class> &ciphertexts) const
-    {
-        std::vector<uint8_t> message;
-        for (const auto &c : ciphertexts) {
-            mpz_class m = powm(c, d, n);
-            message.push_back(static_cast<uint8_t>(m.get_ui() & 0xFF)); // Only lowest byte
+    // For decryptor to load from hex string
+    static std::vector<mpz_class> hexToBlocks(const std::string& hex) {
+        std::istringstream iss(hex);
+        std::vector<mpz_class> res;
+        std::string block;
+        while (iss >> block) res.emplace_back(block, 16);
+        return res;
+    }
+    // For decryptor to load from base64
+    static std::vector<mpz_class> base64ToBlocks(const std::string& b64, size_t block_size) {
+        auto all_bytes = RSAUtils::base64_decode(b64);
+        std::vector<mpz_class> blocks;
+        for(size_t i = 0; i < all_bytes.size(); i += block_size) {
+            std::vector<uint8_t> sub(all_bytes.begin() + i, all_bytes.begin() + std::min(all_bytes.size(), i+block_size));
+            blocks.push_back(RSAUtils::bytes_to_mpz(sub));
         }
-        return message;
+        return blocks;
     }
+};
 
-    std::vector<uint8_t> get_public_key_der() const
-    {
-        return detail::encode_asn1_sequence({
-            detail::encode_asn1_integer(mpz_to_bytes(n)),
-            detail::encode_asn1_integer(mpz_to_bytes(e))
-        });
+class RSADecryptor {
+    const RSAPrivateKey& priv;
+public:
+    explicit RSADecryptor(const RSAPrivateKey& priv_) : priv(priv_) {}
+    RSADecryptionResult decrypt(const std::vector<mpz_class>& ciphertexts) const {
+        std::vector<uint8_t> message;
+        for (const auto& c : ciphertexts) {
+            mpz_class m = RSAUtils::powm(c, priv.d, priv.n);
+            message.push_back(static_cast<uint8_t>(m.get_ui() & 0xFF));
+        }
+        return RSADecryptionResult(std::move(message));
     }
-    std::string get_public_key_pem() const
-    {
-        return detail::wrap_pem(detail::base64_encode(get_public_key_der()), "RSA PUBLIC KEY");
+    RSADecryptionResult decryptFromHex(const std::string& hex) const {
+        return decrypt(RSAEncryptor::hexToBlocks(hex));
     }
-    std::vector<uint8_t> get_private_key_der() const
-    {
-        return detail::encode_asn1_sequence({
-            detail::encode_asn1_integer({0x00}),
-            detail::encode_asn1_integer(mpz_to_bytes(n)),
-            detail::encode_asn1_integer(mpz_to_bytes(e)),
-            detail::encode_asn1_integer(mpz_to_bytes(d)),
-            detail::encode_asn1_integer(mpz_to_bytes(p)),
-            detail::encode_asn1_integer(mpz_to_bytes(q)),
-            detail::encode_asn1_integer(mpz_to_bytes(dp)),
-            detail::encode_asn1_integer(mpz_to_bytes(dq)),
-            detail::encode_asn1_integer(mpz_to_bytes(qinv))
-        });
+    RSADecryptionResult decryptFromBase64(const std::string& b64, size_t block_size) const {
+        return decrypt(RSAEncryptor::base64ToBlocks(b64, block_size));
     }
-    std::string get_private_key_pem() const
-    {
-        return detail::wrap_pem(detail::base64_encode(get_private_key_der()), "RSA PRIVATE KEY");
+};
+
+// -- File Handler (for completeness; can call encryptor/decryptor plus formatters) --
+
+class RSAFileHandler {
+public:
+    static void encrypt_file(const std::string& in_filename, const std::string& out_filename, const RSAPublicKey& pub, const std::string& format = "hex") {
+        RSAEncryptor enc(pub);
+        auto result = enc.encrypt(in_filename);
+        if (format == "hex") result.saveHexToFile(out_filename);
+        else if (format == "base64") result.saveBase64ToFile(out_filename);
+        else if (format == "raw") result.saveRawToFile(out_filename);
+        else throw std::runtime_error("Unknown encryption file format: " + format);
     }
-    void print_keys() const
-    {
-        std::cout << "Public key (e, n):\n" << e.get_str() << "\n" << n.get_str() << "\n";
-        std::cout << "Private key (d):\n" << d.get_str() << "\n";
+    static void decrypt_file(const std::string& in_filename, const std::string& out_filename, const RSAPrivateKey& priv, const std::string& format = "hex", size_t block_size = 0) {
+        RSADecryptor dec(priv);
+        std::ifstream in(in_filename, std::ios::binary);
+        if (!in) throw std::runtime_error("Cannot open ciphertext file: " + in_filename);
+        std::stringstream buffer;
+        buffer << in.rdbuf();
+        if (format == "hex") {
+            auto result = dec.decryptFromHex(buffer.str());
+            result.saveToFile(out_filename);
+        } else if (format == "base64") {
+            if (block_size == 0) throw std::runtime_error("block_size required for base64 decryption");
+            auto result = dec.decryptFromBase64(buffer.str(), block_size);
+            result.saveToFile(out_filename);
+        } else if (format == "raw") {
+            throw std::runtime_error("raw decryption format not implemented in this demo");
+        } else {
+            throw std::runtime_error("Unknown decryption file format: " + format);
+        }
     }
 };
 
 } // namespace RSA_Cipher
+
