@@ -1,145 +1,565 @@
 #pragma once
-
+#include <algorithm>
 #include <cstdint>
-#include <random>
-#include <stdexcept>
+#include <ctime>
+#include <iomanip>
 #include <iostream>
+#include <random>
+#include <sstream>
+#include <stdexcept>
 #include <string>
 #include <vector>
-#include <limits>
-#include <algorithm>
 
-namespace RSA_Cipher {
+namespace RSA_Cipher
+{
 
-class FastRand {
-public:
-    FastRand() : gen_(std::random_device{}()) {}
+// ========== Minimal Big Integer Implementation ========== //
+class BigInt
+{
+    static constexpr uint64_t BASE = 0x100000000ULL;
 
-    uint64_t get(uint64_t min, uint64_t max) {
-        std::uniform_int_distribution<uint64_t> dist(min, max);
-        return dist(gen_);
+  public:
+    std::vector<uint32_t> digits;
+    bool negative = false;
+
+    // --- Constructors ---
+    BigInt(int64_t value = 0) : negative(value < 0)
+    {
+        uint64_t val = negative ? -value : value;
+        if (val == 0)
+            digits.push_back(0);
+        else
+            while (val)
+            {
+                digits.push_back(val & 0xFFFFFFFF);
+                val >>= 32;
+            }
     }
-
-private:
-    std::mt19937_64 gen_;
-};
-
-class RSA {
-public:
-    RSA(uint16_t bitlen = 32) { // Default: demonstration only
-        if (bitlen < 8) throw std::invalid_argument("Bit length too small.");
-        generate_keys(bitlen);
-    }
-
-    std::vector<uint64_t> encrypt(const std::string& message) const {
-        std::vector<uint64_t> ciphertext;
-        ciphertext.reserve(message.size());
-        for (unsigned char c : message)
-            ciphertext.push_back(mod_exp(c, e_, n_));
-        return ciphertext;
-    }
-
-    std::string decrypt(const std::vector<uint64_t>& ciphertext) const {
-        std::string message;
-        message.reserve(ciphertext.size());
-        for (uint64_t c : ciphertext) {
-            uint64_t m = mod_exp(c, d_, n_);
-            if (m > 255) throw std::runtime_error("Decrypted value out of char range.");
-            message += static_cast<char>(m);
+    BigInt(const std::vector<uint8_t> &bytes)
+    {
+        negative = false;
+        size_t nb = bytes.size();
+        size_t nd = (nb + 3) / 4;
+        digits = std::vector<uint32_t>(nd, 0);
+        for (size_t i = 0; i < nb; ++i)
+        {
+            size_t d = (nb - 1 - i) / 4;
+            digits[d] |= uint32_t(bytes[i]) << (8 * ((nb - 1 - i) % 4));
         }
-        return message;
+        trim();
+    }
+    static BigInt random_bits(size_t bits, std::mt19937 &rng)
+    {
+        size_t bytes = (bits + 7) / 8;
+        std::vector<uint8_t> b(bytes);
+        for (auto &v : b)
+            v = uint8_t(rng());
+        b[0] |= 0x80;  // Ensure high bit (bit length)
+        b.back() |= 1; // Ensure odd
+        if (bytes == 1 && b[0] < 3)
+            b[0] = 3; // At least 3 for 1-byte primes
+        return BigInt(b);
+    }
+    static BigInt random_prime(size_t bits, std::mt19937 &rng, int rounds = 16)
+    {
+        int attempts = 0;
+        while (true)
+        {
+            BigInt p = random_bits(bits, rng);
+            if (p.is_odd() && p.is_probable_prime(rounds))
+                return p;
+            p.print("p = ");
+            std::cout << std::endl;
+            if (++attempts > 100000)
+                throw std::runtime_error("Prime search failed: too many attempts");
+        }
+    }
+    void trim()
+    {
+        while (digits.size() > 1 && digits.back() == 0)
+            digits.pop_back();
+        if (digits.size() == 1 && digits[0] == 0)
+            negative = false;
     }
 
-    void print_keys() const {
-        std::cout << "Public Key:  (e = " << e_ << ", n = " << n_ << ")\n";
-        std::cout << "Private Key: (d = " << d_ << ", n = " << n_ << ")\n";
+    // --- Comparison operators ---
+    bool operator<(const BigInt &o) const
+    {
+        if (negative != o.negative)
+            return negative;
+        if (digits.size() != o.digits.size())
+            return negative ? digits.size() > o.digits.size() : digits.size() < o.digits.size();
+        for (int i = int(digits.size()) - 1; i >= 0; --i)
+            if (digits[i] != o.digits[i])
+                return negative ? digits[i] > o.digits[i] : digits[i] < o.digits[i];
+        return false;
+    }
+    bool operator>(const BigInt &o) const
+    {
+        return o < *this;
+    }
+    bool operator==(const BigInt &o) const
+    {
+        return negative == o.negative && digits == o.digits;
+    }
+    bool operator!=(const BigInt &o) const
+    {
+        return !(*this == o);
+    }
+    bool operator<=(const BigInt &o) const
+    {
+        return !(*this > o);
+    }
+    bool operator>=(const BigInt &o) const
+    {
+        return !(*this < o);
+    }
+    bool is_zero() const
+    {
+        return digits.size() == 1 && digits[0] == 0;
+    }
+    BigInt abs() const
+    {
+        BigInt r = *this;
+        r.negative = false;
+        return r;
+    }
+    bool is_odd() const
+    {
+        return digits[0] & 1;
     }
 
-    uint64_t get_public_key_e() const { return e_; }
-    uint64_t get_public_key_n() const { return n_; }
-    uint64_t get_private_key_d() const { return d_; }
+    // --- Arithmetic ---
+    BigInt operator-() const
+    {
+        BigInt r = *this;
+        if (!is_zero())
+            r.negative = !negative;
+        return r;
+    }
 
-private:
-    uint64_t e_{0}, d_{0}, n_{0};
+    BigInt operator+(const BigInt &o) const
+    {
+        if (negative == o.negative)
+        {
+            BigInt res;
+            res.negative = negative;
+            const auto &a = digits, &b = o.digits;
+            size_t n = std::max(a.size(), b.size());
+            res.digits.resize(n, 0);
+            uint64_t carry = 0;
+            for (size_t i = 0; i < n; ++i)
+            {
+                uint64_t s = carry;
+                if (i < a.size())
+                    s += a[i];
+                if (i < b.size())
+                    s += b[i];
+                res.digits[i] = s & 0xFFFFFFFF;
+                carry = s >> 32;
+            }
+            if (carry)
+                res.digits.push_back(uint32_t(carry));
+            res.trim();
+            return res;
+        }
+        return *this - (-o);
+    }
+    BigInt operator-(const BigInt &o) const
+    {
+        if (negative != o.negative)
+            return *this + (-o);
+        if (abs() < o.abs())
+            return -(o - *this);
+        BigInt res = *this;
+        uint64_t borrow = 0;
+        for (size_t i = 0; i < o.digits.size() || borrow; ++i)
+        {
+            uint64_t s = res.digits[i] - borrow;
+            if (i < o.digits.size())
+                s -= o.digits[i];
+            if (s >> 63)
+            {
+                s += BASE;
+                borrow = 1;
+            }
+            else
+                borrow = 0;
+            res.digits[i] = s & 0xFFFFFFFF;
+        }
+        res.trim();
+        return res;
+    }
+    BigInt operator*(const BigInt &o) const
+    {
+        BigInt res;
+        res.digits.resize(digits.size() + o.digits.size(), 0);
+        for (size_t i = 0; i < digits.size(); ++i)
+        {
+            uint64_t carry = 0;
+            for (size_t j = 0; j < o.digits.size() || carry; ++j)
+            {
+                uint64_t s = res.digits[i + j] + carry + uint64_t(digits[i]) * (j < o.digits.size() ? o.digits[j] : 0);
+                res.digits[i + j] = s & 0xFFFFFFFF;
+                carry = s >> 32;
+            }
+        }
+        res.negative = negative != o.negative;
+        res.trim();
+        return res;
+    }
+    // Bitwise OR
+    BigInt operator|(const BigInt &o) const
+    {
+        BigInt res;
+        size_t n = std::max(digits.size(), o.digits.size());
+        res.digits.resize(n, 0);
+        for (size_t i = 0; i < n; ++i)
+        {
+            uint32_t a = i < digits.size() ? digits[i] : 0;
+            uint32_t b = i < o.digits.size() ? o.digits[i] : 0;
+            res.digits[i] = a | b;
+        }
+        res.trim();
+        return res;
+    }
+    // Bitwise shift left/right
+    BigInt operator<<(int b) const
+    {
+        BigInt res = *this;
+        int words = b / 32, bits = b % 32;
+        if (bits)
+        {
+            uint64_t carry = 0;
+            for (size_t i = 0; i < res.digits.size(); ++i)
+            {
+                uint64_t v = (uint64_t(res.digits[i]) << bits) | carry;
+                res.digits[i] = v & 0xFFFFFFFF;
+                carry = v >> 32;
+            }
+            if (carry)
+                res.digits.push_back(uint32_t(carry));
+        }
+        if (words)
+            res.digits.insert(res.digits.begin(), words, 0);
+        res.trim();
+        return res;
+    }
+    BigInt operator>>(int b) const
+    {
+        BigInt res = *this;
+        int words = b / 32, bits = b % 32;
+        if (words >= int(res.digits.size()))
+            return BigInt(0);
+        res.digits.erase(res.digits.begin(), res.digits.begin() + words);
+        if (bits)
+        {
+            uint32_t carry = 0;
+            for (int i = int(res.digits.size()) - 1; i >= 0; --i)
+            {
+                uint32_t v = res.digits[i];
+                res.digits[i] = (v >> bits) | carry;
+                carry = v << (32 - bits);
+            }
+        }
+        res.trim();
+        return res;
+    }
+    BigInt operator&(uint64_t v) const
+    {
+        BigInt res;
+        res.digits = std::vector<uint32_t>(1, digits.empty() ? 0 : (digits[0] & v));
+        res.negative = false;
+        return res;
+    }
+    // Division and modulo
+    std::pair<BigInt, BigInt> divmod(const BigInt &o) const
+    {
+        if (o.is_zero())
+            throw std::runtime_error("Div by zero");
+        BigInt n = abs(), d = o.abs(), q = 0, r = 0;
+        for (int i = int(n.digits.size()) * 32 - 1; i >= 0; --i)
+        {
+            r = (r << 1) + ((n >> i) & 1);
+            if (r >= d)
+            {
+                r = r - d;
+                q = q | (BigInt(1) << i);
+            }
+        }
+        q.negative = negative != o.negative;
+        r.negative = negative;
+        q.trim();
+        r.trim();
+        return {q, r};
+    }
+    BigInt operator/(const BigInt &o) const
+    {
+        return divmod(o).first;
+    }
+    BigInt operator%(const BigInt &o) const
+    {
+        return divmod(o).second;
+    }
 
-    static uint64_t mod_exp(uint64_t base, uint64_t exp, uint64_t mod) {
-        uint64_t result = 1;
-        base %= mod;
-        while (exp) {
-            if (exp & 1) result = (result * base) % mod;
+    // Modular exponentiation
+    BigInt modexp(BigInt e, BigInt mod) const
+    {
+        BigInt base = *this % mod, result = 1;
+        while (!e.is_zero())
+        {
+            if ((e.digits[0] & 1) != 0)
+                result = (result * base) % mod;
             base = (base * base) % mod;
-            exp >>= 1;
+            e = e >> 1;
         }
         return result;
     }
-
-    static uint64_t gcd(uint64_t a, uint64_t b) {
-        while (b) { uint64_t t = b; b = a % b; a = t; }
-        return a;
+    // Modular inverse
+    BigInt modinv(const BigInt &m) const
+    {
+        BigInt a = *this % m, b = m, x0 = 0, x1 = 1;
+        while (!a.is_zero())
+        {
+            BigInt q = b / a, t = b % a;
+            b = a;
+            a = t;
+            BigInt tmp = x0;
+            x0 = x1 - q * x0;
+            x1 = tmp;
+        }
+        if (b != 1)
+            throw std::runtime_error("No modular inverse");
+        if (x1 < 0)
+            x1 = x1 + m;
+        return x1;
     }
-
-    // Miller-Rabin Primality Test (probabilistic, much faster than trial division)
-    static bool is_prime(uint64_t n, int rounds = 6) {
-        if (n < 2 || n % 2 == 0) return n == 2;
-        uint64_t d = n - 1, s = 0;
-        while (d % 2 == 0) { d >>= 1; ++s; }
-        FastRand rnd;
-        for (int i = 0; i < rounds; ++i) {
-            uint64_t a = rnd.get(2, n - 2);
-            uint64_t x = mod_exp(a, d, n);
-            if (x == 1 || x == n - 1)
+    // Miller-Rabin test
+    bool is_probable_prime(int rounds = 8) const
+    {
+        if (*this < 2)
+            return false;
+        if (*this == 2 || *this == 3)
+            return true;
+        if (!is_odd())
+            return false;
+        BigInt d = *this - 1;
+        int s = 0;
+        while ((d & 1) == 0)
+        {
+            d = d >> 1;
+            s++;
+        }
+        std::mt19937 rng((uint32_t)std::time(nullptr));
+        for (int i = 0; i < rounds; ++i)
+        {
+            // Generate random a in [2, *this - 2]
+            BigInt a;
+            do
+            {
+                a = BigInt::random_bits(this->to_bytes().size() * 8, rng);
+            } while (a < 2 || a > (*this - 2));
+            BigInt x = a.modexp(d, *this);
+            if (x == 1 || x == *this - 1)
                 continue;
-            bool witness = false;
-            for (uint64_t r = 1; r < s; ++r) {
-                x = mod_exp(x, 2, n);
-                if (x == n - 1) { witness = true; break; }
+            bool ok = false;
+            for (int r = 1; r < s; ++r)
+            {
+                x = x.modexp(2, *this);
+                if (x == *this - 1)
+                {
+                    ok = true;
+                    break;
+                }
             }
-            if (!witness) return false;
+            if (!ok)
+                return false;
         }
         return true;
     }
 
-    // Extended Euclidean Algorithm for modular inverse
-    static uint64_t modinv(uint64_t a, uint64_t m) {
-        int64_t m0 = m, x0 = 0, x1 = 1;
-        while (a > 1) {
-            int64_t q = a / m, t = m;
-            m = a % m; a = t;
-            t = x0; x0 = x1 - q * x0; x1 = t;
+    // --- Conversion helpers ---
+    std::vector<uint8_t> to_bytes() const
+    {
+        size_t n = digits.size() * 4;
+        std::vector<uint8_t> bytes(n, 0);
+        for (size_t i = 0; i < digits.size(); ++i)
+        {
+            for (int j = 0; j < 4; ++j)
+                bytes[n - 4 * (i + 1) + j] = (digits[i] >> (8 * (3 - j))) & 0xFF;
         }
-        return x1 < 0 ? x1 + m0 : x1;
+        // Remove leading zeros
+        while (bytes.size() > 1 && bytes[0] == 0)
+            bytes.erase(bytes.begin());
+        return bytes;
+    }
+    void print(const char *label = "") const
+    {
+        if (label)
+            std::cout << label;
+        for (auto b : to_bytes())
+            std::cout << std::hex << std::setw(2) << std::setfill('0') << (int)b;
+        std::cout << std::dec << std::endl;
+    }
+    uint32_t to_uint32() const
+    {
+        if (digits.empty())
+            return 0;
+        return digits[0];
+    }
+    uint8_t to_uint8() const
+    {
+        if (digits.empty())
+            return 0;
+        return static_cast<uint8_t>(digits[0] & 0xFF);
+    }
+};
+
+// ========== ASN.1 DER and PEM encoding ========== //
+namespace detail
+{
+inline std::vector<uint8_t> encode_asn1_integer(const std::vector<uint8_t> &value)
+{
+    std::vector<uint8_t> val = value;
+    if (!val.empty() && (val[0] & 0x80))
+        val.insert(val.begin(), 0x00);
+    std::vector<uint8_t> out = {0x02};
+    if (val.size() < 128)
+        out.push_back(static_cast<uint8_t>(val.size()));
+    else
+    {
+        size_t len = val.size();
+        std::vector<uint8_t> len_bytes;
+        while (len)
+        {
+            len_bytes.insert(len_bytes.begin(), len & 0xFF);
+            len >>= 8;
+        }
+        out.push_back(0x80 | len_bytes.size());
+        out.insert(out.end(), len_bytes.begin(), len_bytes.end());
+    }
+    out.insert(out.end(), val.begin(), val.end());
+    return out;
+}
+inline std::vector<uint8_t> encode_asn1_sequence(const std::vector<std::vector<uint8_t>> &elements)
+{
+    std::vector<uint8_t> content;
+    for (const auto &e : elements)
+        content.insert(content.end(), e.begin(), e.end());
+    std::vector<uint8_t> out = {0x30};
+    if (content.size() < 128)
+        out.push_back(static_cast<uint8_t>(content.size()));
+    else
+    {
+        size_t len = content.size();
+        std::vector<uint8_t> len_bytes;
+        while (len)
+        {
+            len_bytes.insert(len_bytes.begin(), len & 0xFF);
+            len >>= 8;
+        }
+        out.push_back(0x80 | len_bytes.size());
+        out.insert(out.end(), len_bytes.begin(), len_bytes.end());
+    }
+    out.insert(out.end(), content.begin(), content.end());
+    return out;
+}
+inline std::string base64_encode(const std::vector<uint8_t> &data)
+{
+    static const char *base64_chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    std::string out;
+    int val = 0, valb = -6;
+    for (uint8_t c : data)
+    {
+        val = (val << 8) + c;
+        valb += 8;
+        while (valb >= 0)
+        {
+            out.push_back(base64_chars[(val >> valb) & 0x3F]);
+            valb -= 6;
+        }
+    }
+    if (valb > -6)
+        out.push_back(base64_chars[((val << 8) >> (valb + 8)) & 0x3F]);
+    while (out.size() % 4)
+        out.push_back('=');
+    return out;
+}
+inline std::string wrap_pem(const std::string &b64, const std::string &type)
+{
+    std::string out = "-----BEGIN " + type + "-----\n";
+    for (size_t i = 0; i < b64.size(); i += 64)
+        out += b64.substr(i, 64) + "\n";
+    out += "-----END " + type + "-----\n";
+    return out;
+}
+} // namespace detail
+
+// ========== RSA Implementation ========== //
+class RSA
+{
+  public:
+    BigInt n, e, d, p, q, dp, dq, qinv;
+
+    RSA(int bits = 512)
+    { // Use 512+ for demo, 1024+ for more realism (slow!)
+        std::random_device rd;
+        std::mt19937 rng(rd());
+        p = BigInt::random_prime(bits / 2, rng);
+        std::cout << "++" << std::endl;
+        do
+        {
+            q = BigInt::random_prime(bits / 2, rng);
+        } while (q == p);
+        n = p * q;
+        BigInt phi = (p - 1) * (q - 1);
+        e = 65537;
+        d = e.modinv(phi);
+        dp = d % (p - 1);
+        dq = d % (q - 1);
+        qinv = q.modinv(p);
     }
 
-    static uint64_t gen_prime(uint16_t bitlen) {
-        FastRand rnd;
-        uint64_t min = 1ULL << (bitlen - 1), max = (1ULL << bitlen) - 1;
-        uint64_t p;
-        do {
-            p = rnd.get(min, max) | 1ULL; // Force odd
-        } while (!is_prime(p));
-        return p;
+    std::vector<BigInt> encrypt(const std::vector<uint8_t> &message) const
+    {
+        std::vector<BigInt> ciphertexts;
+        for (uint8_t c : message)
+            ciphertexts.push_back(BigInt(c).modexp(e, n));
+        return ciphertexts;
     }
-
-    void generate_keys(uint16_t bitlen) {
-        uint16_t half = bitlen / 2;
-        uint64_t p = gen_prime(half), q;
-        do { q = gen_prime(half); } while (q == p);
-        n_ = p * q;
-        uint64_t phi = (p - 1) * (q - 1);
-
-        // Common public exponent, or random odd coprime to phi
-        const uint64_t candidates[] = {65537, 17, 3};
-        e_ = 0;
-        for (uint64_t cand : candidates)
-            if (cand < phi && gcd(cand, phi) == 1) { e_ = cand; break; }
-        FastRand rnd;
-        while (!e_) {
-            uint64_t e_try = rnd.get(3, phi - 1) | 1ULL;
-            if (gcd(e_try, phi) == 1) { e_ = e_try; break; }
-        }
-
-        d_ = modinv(e_, phi);
-        if (!d_) throw std::runtime_error("Failed to compute modular inverse.");
+    std::vector<uint8_t> decrypt(const std::vector<BigInt> &ciphertexts) const
+    {
+        std::vector<uint8_t> message;
+        for (const auto &c : ciphertexts)
+            message.push_back(c.modexp(d, n).to_uint8());
+        return message;
+    }
+    std::vector<uint8_t> get_public_key_der() const
+    {
+        return detail::encode_asn1_sequence({detail::encode_asn1_integer(n.to_bytes()), detail::encode_asn1_integer(e.to_bytes())});
+    }
+    std::string get_public_key_pem() const
+    {
+        return detail::wrap_pem(detail::base64_encode(get_public_key_der()), "RSA PUBLIC KEY");
+    }
+    std::vector<uint8_t> get_private_key_der() const
+    {
+        return detail::encode_asn1_sequence({detail::encode_asn1_integer({0x00}), detail::encode_asn1_integer(n.to_bytes()), detail::encode_asn1_integer(e.to_bytes()),
+                                             detail::encode_asn1_integer(d.to_bytes()), detail::encode_asn1_integer(p.to_bytes()),
+                                             detail::encode_asn1_integer(q.to_bytes()), detail::encode_asn1_integer(dp.to_bytes()),
+                                             detail::encode_asn1_integer(dq.to_bytes()), detail::encode_asn1_integer(qinv.to_bytes())});
+    }
+    std::string get_private_key_pem() const
+    {
+        return detail::wrap_pem(detail::base64_encode(get_private_key_der()), "RSA PRIVATE KEY");
+    }
+    void print_keys() const
+    {
+        std::cout << "Public key (e, n):\n";
+        e.print();
+        n.print();
+        std::cout << "Private key (d):\n";
+        d.print();
     }
 };
 
