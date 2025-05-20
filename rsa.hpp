@@ -25,7 +25,6 @@ enum class OutputFormat {
     HEX,
     BASE64,
     RAW,
-    BIN
 };
 
 class RSAUtils {
@@ -315,31 +314,31 @@ public:
 
 class RSAFileHandler {
 public:
-    static void encrypt_file(const std::string& in_filename, const std::string& out_filename, const RSAPublicKey& pub, const std::string& format = "hex") {
+    static void encrypt_file(const std::string& in_filename, const std::string& out_filename, const RSAPublicKey& pub, const OutputFormat& format = OutputFormat::HEX) {
         RSAEncryptor enc(pub);
         auto result = enc.encrypt(in_filename);
-        if (format == "hex") result.saveHexToFile(out_filename);
-        else if (format == "base64") result.saveBase64ToFile(out_filename);
-        else if (format == "raw") result.saveRawToFile(out_filename);
-        else throw std::runtime_error("Unknown encryption file format: " + format);
+        if (format == OutputFormat::HEX) result.saveHexToFile(out_filename);
+        else if (format == OutputFormat::BASE64) result.saveBase64ToFile(out_filename);
+        else if (format == OutputFormat::RAW) result.saveRawToFile(out_filename);
+        else throw std::runtime_error("Unknown encryption file format!");
     }
-    static void decrypt_file(const std::string& in_filename, const std::string& out_filename, const RSAPrivateKey& priv, const std::string& format = "hex", size_t block_size = 0) {
+    static void decrypt_file(const std::string& in_filename, const std::string& out_filename, const RSAPrivateKey& priv, const OutputFormat& format = OutputFormat::HEX, size_t block_size = 0) {
         RSADecryptor dec(priv);
         std::ifstream in(in_filename, std::ios::binary);
         if (!in) throw std::runtime_error("Cannot open ciphertext file: " + in_filename);
         std::stringstream buffer;
         buffer << in.rdbuf();
-        if (format == "hex") {
+        if (format == OutputFormat::HEX) {
             auto result = dec.decryptFromHex(buffer.str());
             result.saveToFile(out_filename);
-        } else if (format == "base64") {
+        } else if (format == OutputFormat::BASE64) {
             if (block_size == 0) throw std::runtime_error("block_size required for base64 decryption");
             auto result = dec.decryptFromBase64(buffer.str(), block_size);
             result.saveToFile(out_filename);
-        } else if (format == "raw") {
+        } else if (format == OutputFormat::RAW) {
             throw std::runtime_error("raw decryption format not implemented in this demo");
         } else {
-            throw std::runtime_error("Unknown decryption file format: " + format);
+            throw std::runtime_error("Unknown decryption file format!");
         }
     }
 };
