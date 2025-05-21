@@ -7,6 +7,7 @@
 ## Table of Contents
 
 - [Overview](#overview)
+- [What is RSA? (History and Detailed Explanation)](#what-is-rsa-history-and-detailed-explanation)
 - [Directory Structure](#directory-structure)
 - [Features](#features)
 - [Dependencies](#dependencies)
@@ -35,22 +36,100 @@ This project provides a modern, header-only C++ implementation of the RSA crypto
 
 ---
 
-## Directory Structure
+## What is RSA? (History and Detailed Explanation)
 
-```
-RSA_Algorithm/
-  ├── src/
-  │     ├── rsa.hpp        # Core RSA logic (header-only)
-  │     └── main.cpp       # Example usage program
-  ├── bin/
-  │     └── rsa_cli.cpp    # Command-line interface tool
-  ├── tests/
-  │     └── rsa_test.cpp   # Automated test suite
-  └── README.md
-```
+### Historical Background
+
+RSA stands for Rivest–Shamir–Adleman, named after its inventors Ron Rivest, Adi Shamir, and Leonard Adleman. The algorithm was first publicly described in 1977 by these three MIT researchers. However, unknown to the public at the time, a British mathematician Clifford Cocks had developed a similar system in 1973 while working at GCHQ, but his work was classified until the 1990s.
+
+The publication of RSA revolutionized the field of cryptography by introducing the concept of practical public-key cryptography, which underpins much of modern digital security, including secure web browsing, encrypted email, digital signatures, and cryptocurrency.
+
+### Why is RSA Important?
+
+Prior to RSA and public-key cryptography, all secure communication required that both parties share a secret key in advance—a major problem for large-scale or spontaneous secure communications. RSA enabled anyone to publish a "public key" that anyone could use to encrypt messages, but only the owner of the corresponding "private key" could decrypt them. This decoupling of encryption and decryption keys is the cornerstone of modern internet security.
+
+### The Mathematics of RSA (Obsessive Details)
+
+RSA is based on the mathematical difficulty of factoring the product of two large prime numbers. The security of RSA relies on the fact that, while it is easy to multiply two large primes together to get a composite number, it is extremely difficult to do the reverse (i.e., factor a very large number back into its prime components) with current computing technology.
+
+#### RSA Key Generation Steps
+
+1. **Select Two Large Prime Numbers (`p` and `q`):**
+   - These should be chosen randomly and kept secret. Typical key sizes use primes hundreds of digits long (1024, 2048, or 4096 bits).
+   - The security of RSA increases with the size of these primes.
+
+2. **Compute the Modulus (`n`):**
+   - `n = p * q`
+   - The modulus `n` is used as part of both the public and private keys.
+
+3. **Calculate Euler's Totient Function (`φ(n)`):**
+   - `φ(n) = (p - 1) * (q - 1)`
+   - Euler's Totient Function counts the positive integers up to `n` that are relatively prime to `n`.
+
+4. **Choose Public Exponent (`e`):**
+   - `e` must be an integer such that `1 < e < φ(n)` and `gcd(e, φ(n)) = 1` (i.e., `e` and `φ(n)` are coprime).
+   - Common choices for `e` are 65537, 17, or 3 because they make encryption efficient while maintaining security.
+
+5. **Compute Private Exponent (`d`):**
+   - `d` is the modular multiplicative inverse of `e` modulo `φ(n)`, i.e., `d ≡ e⁻¹ mod φ(n)`.
+   - This means `(d * e) mod φ(n) = 1`.
+   - `d` must be kept secret.
+
+6. **Public and Private Keys:**
+   - **Public Key:** The pair `(n, e)`
+   - **Private Key:** The pair `(n, d)` (with knowledge of `p` and `q` also considered part of the private key in practical implementations for optimization)
+
+#### RSA Encryption and Decryption
+
+- **Encryption:** Given a plaintext message `m` (represented as an integer `0 ≤ m < n`), compute ciphertext `c`:
+  - `c = m^e mod n`
+- **Decryption:** Given ciphertext `c`, compute plaintext `m`:
+  - `m = c^d mod n`
+
+**Note:** In practice, messages larger than `n` must be split, padded, or handled with hybrid cryptography. Direct use of RSA is not secure for encrypting large data or arbitrary messages (see "Security Notes" below).
+
+#### Why is RSA Secure?
+
+The security of RSA depends on the practical difficulty of factoring the large number `n` back into its prime components `p` and `q`. If an attacker could factor `n`, they could compute `φ(n)` and then derive the private exponent `d`. For sufficiently large key sizes (at least 2048 bits as of 2024), no known algorithms can factor such numbers in a reasonable time frame with classical computers.
+
+#### Digital Signatures with RSA
+
+Besides encryption, RSA can be used for digital signatures:
+- The sender "signs" a message by computing `s = m^d mod n` with their private key.
+- The recipient verifies the signature by computing `m = s^e mod n` with the sender's public key.
+
+This allows verification of both authenticity (only the private key holder could have signed) and integrity of the original message.
+
+#### Limitations and Attacks
+
+- **Padding Oracle/Chosen Ciphertext Attacks:** Raw RSA is vulnerable to several attacks if used without proper padding schemes (e.g., PKCS#1 v1.5, OAEP).
+- **Key Size:** Increasing computational power makes longer keys necessary. 1024-bit keys are no longer considered secure.
+- **Side-channel Attacks:** Timing or power analysis can leak information if not properly mitigated.
+- **Quantum Computers:** Shor's algorithm could break RSA if a sufficiently large quantum computer is ever built.
+
+#### Summary Table
+
+| Step           | Symbol  | Description                                                                |
+|----------------|---------|----------------------------------------------------------------------------|
+| Choose Primes  | p, q    | Large, random primes                                                       |
+| Compute Modulus| n       | n = p * q                                                                  |
+| Totient        | φ(n)    | φ(n) = (p-1)*(q-1)                                                         |
+| Public Exponent| e       | 1 < e < φ(n), gcd(e, φ(n))=1                                               |
+| Private Exp.   | d       | d ≡ e⁻¹ mod φ(n)                                                           |
+| Public Key     | (n, e)  | Distributed openly                                                         |
+| Private Key    | (n, d)  | Kept secret                                                                |
+| Encrypt        | c       | c = m^e mod n                                                              |
+| Decrypt        | m       | m = c^d mod n                                                              |
+
+#### References
+
+- [Original RSA Paper (1978)](https://people.csail.mit.edu/rivest/Rsapaper.pdf)
+- [Wikipedia: RSA (cryptosystem)](https://en.wikipedia.org/wiki/RSA_(cryptosystem))
+- [Practical Cryptography for Developers](https://cryptobook.nakov.com/asymmetric-key-ciphers/rsa-encrypt-decrypt-examples)
 
 ---
 
+## Directory Structure
 ## Features
 
 - **Key generation:** Choose from 1024, 2048, 3072, or 4096 bits
