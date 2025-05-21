@@ -2,6 +2,7 @@
 
 **RSA (Rivest–Shamir–Adleman) Asymmetric Encryption Algorithm Implementation — Educational Purposes**
 
+---
 
 ## Table of Contents
 
@@ -11,8 +12,7 @@
 - [Dependencies](#dependencies)
 - [Build Instructions](#build-instructions)
 - [Usage Examples](#usage-examples)
-  - [C++ Example Code](#c-example-code)
-  - [Command-Line Tool Usage](#command-line-tool-usage)
+- [Command-Line Interface: rsa_cli](#command-line-interface-rsa_cli)
 - [File/Code Structure](#filecode-structure)
 - [Testing](#testing)
 - [OS Compatibility & Warnings](#os-compatibility--warnings)
@@ -98,15 +98,6 @@ g++ -std=c++17 -lgmp -lgmpxx -o rsa_test tests/rsa_test.cpp
 ---
 
 ## Usage Examples
-
-### C++ Example Code
-
-#### Generate Keys, Encrypt, and Decrypt a Message
-
-
----
-
-## Examples: Using the RSA_Algorithm Library
 
 ### 1. Generate and Save Keys to PEM Files
 
@@ -228,47 +219,72 @@ auto priv = RSA::RSAPrivateKey::load_pem("private.pem");
 
 ---
 
-**Tip:**  
-- You can use keys immediately after generating them (in-memory), or save them to PEM files and later load them from disk as needed.
-- Both approaches are supported throughout the API for flexibility.
+## Command-Line Interface: rsa_cli
 
+The project includes a robust CLI tool, `rsa_cli`, for generating keys, encrypting, and decrypting messages or files.  
+It handles user prompts, colored output, and supports all core library functionality.
 
-### Command-Line Tool Usage
+### CLI Usage
 
-#### Key Generation
+```sh
+./rsa_cli <command> [options]
+```
 
+#### Main Commands
+
+- `genkey`    Generate RSA key pair and save in PEM format.
+- `encrypt`   Encrypt a message or file.
+- `decrypt`   Decrypt a message or file.
+
+### Flags and Arguments Table
+
+| Command   | Required Flags                                      | Optional Flags & Arguments                                            | Description                                 |
+|-----------|-----------------------------------------------------|-----------------------------------------------------------------------|---------------------------------------------|
+| genkey    | `--pub <pub.pem>`<br>`--priv <priv.pem>`            | `--bits <size>`<br>`--quick`<br>`--force`<br>`--no-color`             | Generate RSA keypair                        |
+| encrypt   | `--pub <pub.pem>`<br>`--in <file\|msg>`<br>`--out <file>` | `--format <binary\|base64\|hex>`<br>`--msg`<br>`--quick`<br>`--force`<br>`--no-color` | Encrypt file or message                     |
+| decrypt   | `--priv <priv.pem>`<br>`--in <file\|msg>`<br>`--out <file>`| `--format <binary\|base64\|hex>`<br>`--msg`<br>`--quick`<br>`--force`<br>`--no-color` | Decrypt file or message                     |
+|           |                                                     | `--help`<br>`--version`                                               | Show help/version info                      |
+
+#### Flag Descriptions
+
+- `--pub <file>`: Path to the public key (for encrypt/genkey)
+- `--priv <file>`: Path to the private key (for decrypt/genkey)
+- `--in <file>`: Input file (for `--msg`, input is a message string)
+- `--out <file>`: Output file
+- `--bits <size>`: Key size (1024, 2048, 3072, 4096; default: 1024)
+- `--format <type>`: Output format (`binary`, `base64`, or `hex`; default: binary)
+- `--msg`: Treat input as a string message instead of a file
+- `--quick`: Suppress confirmation prompts
+- `--force`: Overwrite existing output files without prompting
+- `--no-color`: Disable colored output
+- `--help`: Show help and exit
+- `--version`: Print the CLI version
+
+#### CLI Usage Examples
+
+**Generate a key pair:**
 ```sh
 ./rsa_cli genkey --pub public.pem --priv private.pem --bits 2048 --quick
 ```
 
-#### Encrypt a Message
-
-```sh
-./rsa_cli encrypt --pub public.pem --in "Secret Message" --out encrypted.b64 --format base64 --msg
-```
-
-#### Encrypt a File
-
+**Encrypt a file as binary:**
 ```sh
 ./rsa_cli encrypt --pub public.pem --in myfile.txt --out encrypted.bin --format binary
 ```
 
-#### Decrypt a Message
-
+**Encrypt a message to base64:**
 ```sh
-./rsa_cli decrypt --priv private.pem --in encrypted.b64 --out message.txt --format base64 --msg
+./rsa_cli encrypt --pub public.pem --in "my secret" --out encrypted.b64 --format base64 --msg
 ```
 
-#### Decrypt a File
-
+**Decrypt a file:**
 ```sh
-./rsa_cli decrypt --priv private.pem --in encrypted.bin --out myfile_decrypted.txt --format binary
+./rsa_cli decrypt --priv private.pem --in encrypted.bin --out decrypted.txt --format binary
 ```
 
-#### Help
-
+**Decrypt a base64 message:**
 ```sh
-./rsa_cli --help
+./rsa_cli decrypt --priv private.pem --in "base64ciphertext" --out message.txt --format base64 --msg
 ```
 
 ---
@@ -362,5 +378,4 @@ MIT License (see [LICENSE](LICENSE) file).
 
 **Warning:**  
 Do NOT use this implementation for protecting real secrets or in production systems. For professional cryptography, use vetted libraries and protocols.
-
----
+```
