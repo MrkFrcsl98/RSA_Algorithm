@@ -10,6 +10,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <fcntl.h>
+#include <unistd.h> // For secure random bytes
 
 #if defined(__GNUC__) || defined(__clang__)
 #define __attr_nodiscard __attribute__((warn_unused_result))
@@ -40,6 +42,33 @@
 #define __noexcept
 #define __const_noexcept
 #endif
+
+// ========== Secure Randomness ==========
+// Fill `buf` with `len` cryptographically secure random bytes using /dev/urandom
+__attr_hot static inline void get_secure_random_bytes(void *buf, size_t len) {
+    int fd = open("/dev/urandom", O_RDONLY);
+    if (fd < 0) {
+        perror("open /dev/urandom");
+        abort();
+    }
+    ssize_t r = read(fd, buf, len);
+    if (r != (ssize_t)len) {
+        perror("read /dev/urandom");
+        close(fd);
+        abort();
+    }
+    close(fd);
+}
+// Use cryptographically secure seed for GMP RNG
+__attr_hot static inline void gmp_randseed_secure(gmp_randstate_t rng) {
+    unsigned char seed_buf[32];
+    get_secure_random_bytes(seed_buf, sizeof(seed_buf));
+    mpz_t seed;
+    mpz_init(seed);
+    mpz_import(seed, sizeof(seed_buf), 1, 1, 0, 0, seed_buf);
+    gmp_randseed(rng, seed);
+    mpz_clear(seed);
+}
 
 // ===== ENUMS =====
 typedef enum
@@ -381,9 +410,9 @@ __attr_hot static inline void random_prime(mpz_t out, const int bits, gmp_randst
         mpz_setbit(out, 0);
         if (likely(mpz_probab_prime_p(out, 40)))
             return;
-        if (unlikely(++tries > 1000))
+        if (unlikely(++tries > 100000))
         {
-            fprintf(stderr, "Failed to generate a random prime after 1000 tries\n");
+            fprintf(stderr, "Failed to generate a random prime after 100000 tries\n");
             abort();
         }
     }
@@ -413,23 +442,19 @@ __attr_nodiscard __attr_hot static inline int pkcs1_pad(const uint8_t * __restri
     }
     padded[0] = 0x00;
     padded[1] = 0x02;
-    for (size_t i = 0; i < mod_bytes - 3 - blocklen; ++i)
-    {
-        uint8_t r = 0;
-        int pad_tries = 0;
-        do
-        {
-            r = (uint8_t)((rand() % 255) + 1);
-            if (unlikely(++pad_tries > 1000))
-            {
-                fprintf(stderr, "Failed to find non-zero padding byte after 1000 tries\n");
-                return 0;
-            }
-        } while (r == 0);
-        padded[2 + i] = r;
+    size_t pad_len = mod_bytes - 3 - blocklen;
+    uint8_t *pad_bytes = (uint8_t *)SAFE_MALLOC(pad_len);
+    get_secure_random_bytes(pad_bytes, pad_len);
+    // Ensure all padding bytes are nonzero
+    for (size_t i = 0; i < pad_len; ++i) {
+        while (pad_bytes[i] == 0) {
+            get_secure_random_bytes(&pad_bytes[i], 1);
+        }
+        padded[2 + i] = pad_bytes[i];
     }
-    padded[2 + (mod_bytes - 3 - blocklen)] = 0x00;
-    memcpy(padded + 3 + (mod_bytes - 3 - blocklen), block, blocklen);
+    SECURE_FREE(pad_bytes, pad_len);
+    padded[2 + pad_len] = 0x00;
+    memcpy(padded + 3 + pad_len, block, blocklen);
     return 1;
 }
 
@@ -512,7 +537,7 @@ __attr_hot static inline void rsa_generate_keypair(RSAKeyPair * const kp, const 
     }
     gmp_randstate_t rng;
     gmp_randinit_mt(rng);
-    gmp_randseed_ui(rng, (unsigned long)time(NULL));
+    gmp_randseed_secure(rng); // Secure GMP RNG seed!
     mpz_t p, q, phi, d, e, dP, dQ, qInv;
     mpz_inits(p, q, phi, d, e, dP, dQ, qInv, NULL);
     random_prime(p, bits / 2, rng);
@@ -549,7 +574,7 @@ __attr_hot static inline void rsa_generate_keypair(RSAKeyPair * const kp, const 
 }
 
 // ========== ENCRYPTION/DECRYPTION ==========
-__attr_nodiscard __attr_hot static inline int rsa_encrypt(const uint8_t * __restrict__ message, const size_t mlen, const RSAPublicKey * const pub, uint8_t * __restrict__ out, size_t * const outlen)
+__attr_nodiscard __attr_hot static inline int rsa_encrypt(const uint8_t * __restrict__ message, const size_t mlen, const RSAPublicKey * const pub, uint8_t * __restrict__ out, size_t * const outlen) __noexcept
 {
     if (unlikely(!message || !pub || !outlen))
     {
@@ -586,7 +611,7 @@ __attr_nodiscard __attr_hot static inline int rsa_encrypt(const uint8_t * __rest
     return 1;
 }
 
-__attr_nodiscard __attr_hot static inline int rsa_decrypt(const uint8_t * __restrict__ enc, const size_t enclen, const RSAPrivateKey * const priv, uint8_t * __restrict__ out, size_t * const outlen)
+__attr_nodiscard __attr_hot static inline int rsa_decrypt(const uint8_t * __restrict__ enc, const size_t enclen, const RSAPrivateKey * const priv, uint8_t * __restrict__ out, size_t * const outlen) __noexcept
 {
     if (unlikely(!enc || !priv || !out || !outlen))
     {
@@ -690,7 +715,6 @@ __attr_nodiscard __attr_hot static inline int rsa_private_key_save_pem(const cha
 }
 
 // ========== DER PARSING HELPERS & LOADERS ==========
-// Minimalist DER parser for INTEGER and SEQUENCE, not robust, only for trusted PKCS#1 keys.
 __attr_hot static inline int der_read_tag_len(const uint8_t *buf, size_t buflen, size_t *offset, uint8_t *tag, size_t *len)
 {
     if (*offset + 2 > buflen) return 0;
