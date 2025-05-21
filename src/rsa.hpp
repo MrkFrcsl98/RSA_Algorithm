@@ -13,6 +13,8 @@
 #include <iomanip>
 #include <cctype>
 #include <iostream>
+#include <random>
+#include <chrono>
 
 // ===== PEM_DER utilities (ASN.1 DER, Base64, PEM) =====
 namespace PEM_DER {
@@ -128,12 +130,18 @@ namespace RSA {
 enum class KeySize { Bits1024=1024, Bits2048=2048, Bits3072=3072, Bits4096=4096 };
 enum class OutputFormat { Binary, Hex, Base64 };
 
+template <typename T>
+std::string ToPem(const T& obj, const std::string& type) {
+    return PEM_DER::pem_wrap(PEM_DER::base64_encode(obj.to_der()), type);
+}
+
 // ----- Key classes -----
 class RSAPublicKey {
 public:
     mpz_class n, e;
     RSAPublicKey() : n(0), e(0) {}
     RSAPublicKey(const mpz_class &n_, const mpz_class &e_) : n(n_), e(e_) {}
+
     std::vector<uint8_t> to_der() const {
         std::vector<std::vector<uint8_t>> fields = {
             PEM_DER::encode_integer(n),
@@ -142,7 +150,7 @@ public:
         return PEM_DER::encode_sequence(fields);
     }
     std::string to_pem() const {
-        return PEM_DER::pem_wrap(PEM_DER::base64_encode(to_der()), "RSA PUBLIC KEY");
+        return ToPem(*this, "RSA PUBLIC KEY");
     }
     static RSAPublicKey from_der(const std::vector<uint8_t>& der) {
         size_t idx = 0, seq_end = 0;
@@ -156,7 +164,10 @@ public:
         return from_der(der);
     }
     void save_pem(const std::string& filename) const {
-        std::ofstream(filename) << to_pem();
+        std::ofstream out(filename);
+        if (!out) throw std::runtime_error("Cannot open file for writing: " + filename);
+        out << to_pem();
+        if (!out.good()) throw std::runtime_error("Failed to write PEM to: " + filename);
     }
     static RSAPublicKey load_pem(const std::string& filename) {
         std::ifstream f(filename);
@@ -165,6 +176,7 @@ public:
         return from_pem(ss.str());
     }
 };
+
 class RSAPrivateKey {
 public:
     mpz_class n, e, d, p, q, dP, dQ, qInv;
@@ -173,6 +185,7 @@ public:
                   const mpz_class &p_, const mpz_class &q_,
                   const mpz_class &dP_, const mpz_class &dQ_, const mpz_class &qInv_)
         : n(n_), e(e_), d(d_), p(p_), q(q_), dP(dP_), dQ(dQ_), qInv(qInv_) {}
+
     std::vector<uint8_t> to_der() const {
         std::vector<std::vector<uint8_t>> fields = {
             PEM_DER::encode_integer(0),
@@ -188,7 +201,7 @@ public:
         return PEM_DER::encode_sequence(fields);
     }
     std::string to_pem() const {
-        return PEM_DER::pem_wrap(PEM_DER::base64_encode(to_der()), "RSA PRIVATE KEY");
+        return ToPem(*this, "RSA PRIVATE KEY");
     }
     static RSAPrivateKey from_der(const std::vector<uint8_t>& der) {
         size_t idx = 0, seq_end = 0;
@@ -209,7 +222,10 @@ public:
         return from_der(der);
     }
     void save_pem(const std::string& filename) const {
-        std::ofstream(filename) << to_pem();
+        std::ofstream out(filename);
+        if (!out) throw std::runtime_error("Cannot open file for writing: " + filename);
+        out << to_pem();
+        if (!out.good()) throw std::runtime_error("Failed to write PEM to: " + filename);
     }
     static RSAPrivateKey load_pem(const std::string& filename) {
         std::ifstream f(filename);
@@ -250,11 +266,13 @@ inline void write_file(const std::string &filename, const std::vector<uint8_t> &
     std::ofstream file(filename, std::ios::binary);
     if (!file) throw std::runtime_error("Cannot open file for writing: " + filename);
     file.write(reinterpret_cast<const char *>(data.data()), data.size());
+    if (!file.good()) throw std::runtime_error("Failed to write binary data to: " + filename);
 }
 inline void write_text(const std::string &filename, const std::string &data) {
     std::ofstream file(filename);
     if (!file) throw std::runtime_error("Cannot open file for writing (text): " + filename);
     file << data;
+    if (!file.good()) throw std::runtime_error("Failed to write text data to: " + filename);
 }
 inline bool file_exists(const std::string &filename) {
     std::ifstream f(filename, std::ios::binary);
@@ -295,6 +313,39 @@ inline std::vector<uint8_t> hex_to_bytes(const std::string& hex) {
 }
 } // namespace UTIL
 
+// PKCS#1 v1.5 padding for encryption
+inline std::vector<uint8_t> pkcs1_pad(const std::vector<uint8_t>& block, size_t mod_bytes) {
+    if (block.size() > mod_bytes - 11)
+        throw std::runtime_error("Message too long for RSA PKCS#1 v1.5 padding.");
+    std::vector<uint8_t> padded(mod_bytes, 0x00);
+    padded[0] = 0x00;
+    padded[1] = 0x02;
+    // Fill padding string with non-zero random bytes
+    std::random_device rd;
+    std::mt19937 gen(static_cast<uint32_t>(std::chrono::system_clock::now().time_since_epoch().count()));
+    std::uniform_int_distribution<int> dist(1, 255);
+    size_t pad_len = mod_bytes - 3 - block.size();
+    for (size_t i = 0; i < pad_len; ++i) {
+        uint8_t rnd = 0;
+        do { rnd = static_cast<uint8_t>(dist(gen)); } while (rnd == 0);
+        padded[2 + i] = rnd;
+    }
+    padded[2 + pad_len] = 0x00;
+    std::copy(block.begin(), block.end(), padded.begin() + 3 + pad_len);
+    return padded;
+}
+
+// Remove PKCS#1 v1.5 padding after decryption
+inline std::vector<uint8_t> pkcs1_unpad(const std::vector<uint8_t>& padded) {
+    if (padded.size() < 11 || padded[0] != 0x00 || padded[1] != 0x02)
+        throw std::runtime_error("Invalid PKCS#1 v1.5 padding.");
+    size_t idx = 2;
+    while (idx < padded.size() && padded[idx] != 0x00) ++idx;
+    if (idx == padded.size() || idx < 10)
+        throw std::runtime_error("Invalid PKCS#1 v1.5 padding (no 0x00 separator or not enough padding).");
+    return std::vector<uint8_t>(padded.begin() + idx + 1, padded.end());
+}
+
 // ----- Key Generation -----
 inline KeyPair GenerateKeyPair(KeySize bits = KeySize::Bits2048) {
     int num_bits = static_cast<int>(bits);
@@ -316,20 +367,32 @@ inline KeyPair GenerateKeyPair(KeySize bits = KeySize::Bits2048) {
     return {pub, priv};
 }
 
-// ----- Encryption/Decryption primitives -----
+// ----- Encryption/Decryption primitives (PKCS#1 v1.5) -----
 namespace INTERNAL {
 inline std::vector<mpz_class> encrypt_blocks(const std::vector<uint8_t>& data, const RSAPublicKey& pub) {
     if (pub.n == 0 || pub.e == 0) throw std::runtime_error("Public key is not initialized.");
+    size_t mod_bytes = (mpz_sizeinbase(pub.n.get_mpz_t(), 2) + 7) / 8;
+    size_t block_size = mod_bytes - 11;
     std::vector<mpz_class> ciphertexts;
-    for (uint8_t c : data)
-        ciphertexts.push_back(UTIL::powm(c, pub.e, pub.n));
+    for (size_t i = 0; i < data.size(); i += block_size) {
+        std::vector<uint8_t> block(data.begin() + i, data.begin() + std::min(data.size(), i + block_size));
+        std::vector<uint8_t> padded = pkcs1_pad(block, mod_bytes);
+        mpz_class m = UTIL::bytes_to_mpz(padded);
+        if (m >= pub.n) throw std::runtime_error("Block value too large for modulus.");
+        ciphertexts.push_back(UTIL::powm(m, pub.e, pub.n));
+    }
     return ciphertexts;
 }
 inline std::vector<uint8_t> decrypt_blocks(const std::vector<mpz_class>& cts, const RSAPrivateKey& priv) {
     if (priv.n == 0 || priv.d == 0) throw std::runtime_error("Private key is not initialized.");
+    size_t mod_bytes = (mpz_sizeinbase(priv.n.get_mpz_t(), 2) + 7) / 8;
     std::vector<uint8_t> message;
-    for (const auto& c : cts)
-        message.push_back(static_cast<uint8_t>(UTIL::powm(c, priv.d, priv.n).get_ui() & 0xFF));
+    for (const auto& c : cts) {
+        auto padded = UTIL::mpz_to_bytes(UTIL::powm(c, priv.d, priv.n));
+        if (padded.size() < mod_bytes) padded.insert(padded.begin(), mod_bytes - padded.size(), 0);
+        auto block = pkcs1_unpad(padded);
+        message.insert(message.end(), block.begin(), block.end());
+    }
     return message;
 }
 inline std::vector<uint8_t> cts_to_bytes(const std::vector<mpz_class>& cts, size_t mod_bytes) {
@@ -375,9 +438,8 @@ class EncryptedResult {
     std::vector<uint8_t> raw;
     OutputFormat format;
 public:
-    EncryptedResult(std::vector<uint8_t> rawData)
+    explicit EncryptedResult(std::vector<uint8_t> rawData)
         : raw(std::move(rawData)), format(OutputFormat::Binary) {}
-
     EncryptedResult& toFormat(OutputFormat fmt) {
         format = fmt;
         return *this;
@@ -402,9 +464,8 @@ public:
 class DecryptedResult {
     std::vector<uint8_t> raw;
 public:
-    DecryptedResult(std::vector<uint8_t> rawData)
+    explicit DecryptedResult(std::vector<uint8_t> rawData)
         : raw(std::move(rawData)) {}
-
     std::string toString() const {
         return std::string(raw.begin(), raw.end());
     }
