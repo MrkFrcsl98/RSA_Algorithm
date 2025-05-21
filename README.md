@@ -103,50 +103,135 @@ g++ -std=c++17 -lgmp -lgmpxx -o rsa_test tests/rsa_test.cpp
 
 #### Generate Keys, Encrypt, and Decrypt a Message
 
+
+---
+
+## Examples: Using the RSA_Algorithm Library
+
+### 1. Generate and Save Keys to PEM Files
+
+```cpp
+#include "rsa.hpp"
+
+int main() {
+    // Generate a 2048-bit key pair (in memory)
+    RSA::KeyPair keys = RSA::GenerateKeyPair(RSA::KeySize::Bits2048);
+
+    // Save keys to PEM files
+    keys.public_key.save_pem("public.pem");
+    keys.private_key.save_pem("private.pem");
+}
+```
+
+---
+
+### 2. Encrypt and Decrypt a String Message (Both File and In-Memory Keys)
+
 ```cpp
 #include "rsa.hpp"
 #include <iostream>
 
 int main() {
-    using namespace RSA;
-
-    // Generate a key pair (1024 bits)
-    KeyPair keys = GenerateKeyPair(KeySize::Bits1024);
-
-    // Save keys to PEM files
-    keys.public_key.save_pem("public.pem");
-    keys.private_key.save_pem("private.pem");
-
-    // Load keys from PEM files
-    RSAPublicKey pub = RSAPublicKey::load_pem("public.pem");
-    RSAPrivateKey priv = RSAPrivateKey::load_pem("private.pem");
-
-    // Encrypt a message
     std::string message = "Hello, RSA!";
-    std::string encrypted = MESSAGE::Encrypt(message, pub)
-                                .toFormat(OutputFormat::Base64)
-                                .toString();
 
-    // Decrypt the message
-    std::string decrypted = MESSAGE::Decrypt(encrypted, priv, OutputFormat::Base64);
+    // --- Option 1: Use keys directly after generation (in-memory) ---
+    RSA::KeyPair keys = RSA::GenerateKeyPair(RSA::KeySize::Bits1024);
 
-    std::cout << "Original:   " << message << "\n";
-    std::cout << "Encrypted:  " << encrypted << "\n";
-    std::cout << "Decrypted:  " << decrypted << "\n";
+    std::string encrypted_inline = RSA::MESSAGE::Encrypt(message, keys.public_key)
+                                      .toFormat(RSA::OutputFormat::Base64)
+                                      .toString();
+    std::string decrypted_inline = RSA::MESSAGE::Decrypt(encrypted_inline, keys.private_key, RSA::OutputFormat::Base64);
+
+    std::cout << "[Inline] Decrypted: " << decrypted_inline << std::endl; // Output: Hello, RSA!
+
+    // --- Option 2: Load keys from PEM files ---
+    // (Assuming PEM files exist, e.g., from the previous example)
+    auto pub = RSA::RSAPublicKey::load_pem("public.pem");
+    auto priv = RSA::RSAPrivateKey::load_pem("private.pem");
+
+    std::string encrypted_file = RSA::MESSAGE::Encrypt(message, pub)
+                                     .toFormat(RSA::OutputFormat::Base64)
+                                     .toString();
+    std::string decrypted_file = RSA::MESSAGE::Decrypt(encrypted_file, priv, RSA::OutputFormat::Base64);
+
+    std::cout << "[PEM file] Decrypted: " << decrypted_file << std::endl; // Output: Hello, RSA!
 }
 ```
 
-#### File Encryption/Decryption
+---
+
+### 3. Encrypt and Decrypt a File (Both File and In-Memory Keys)
 
 ```cpp
-// Encrypt a file
-RSA::FILE::Encrypt("plain.txt", "enc.bin", pub, OutputFormat::Binary);
+#include "rsa.hpp"
 
-// Decrypt the file
-RSA::FILE::Decrypt("enc.bin", "dec.txt", priv, OutputFormat::Binary);
+int main() {
+    // --- Option 1: Use keys just generated (in-memory) ---
+    RSA::KeyPair keys = RSA::GenerateKeyPair(RSA::KeySize::Bits1024);
+
+    // Encrypt and decrypt using in-memory keys
+    RSA::FILE::Encrypt("plain.txt", "enc.bin", keys.public_key, RSA::OutputFormat::Binary);
+    RSA::FILE::Decrypt("enc.bin", "dec.txt", keys.private_key, RSA::OutputFormat::Binary);
+
+    // --- Option 2: Use keys loaded from PEM files ---
+    auto pub = RSA::RSAPublicKey::load_pem("public.pem");
+    auto priv = RSA::RSAPrivateKey::load_pem("private.pem");
+
+    RSA::FILE::Encrypt("plain.txt", "enc2.bin", pub, RSA::OutputFormat::Binary);
+    RSA::FILE::Decrypt("enc2.bin", "dec2.txt", priv, RSA::OutputFormat::Binary);
+}
 ```
 
 ---
+
+### 4. Encrypt to Hex or Base64, Decrypt from Hex or Base64
+
+```cpp
+#include "rsa.hpp"
+#include <iostream>
+
+int main() {
+    std::string message = "Format test!";
+    RSA::KeyPair keys = RSA::GenerateKeyPair(RSA::KeySize::Bits1024);
+
+    // Encrypt to hex
+    std::string hex_cipher = RSA::MESSAGE::Encrypt(message, keys.public_key)
+                                .toFormat(RSA::OutputFormat::Hex)
+                                .toString();
+    std::string hex_plain = RSA::MESSAGE::Decrypt(hex_cipher, keys.private_key, RSA::OutputFormat::Hex);
+
+    // Encrypt to base64
+    std::string b64_cipher = RSA::MESSAGE::Encrypt(message, keys.public_key)
+                                .toFormat(RSA::OutputFormat::Base64)
+                                .toString();
+    std::string b64_plain = RSA::MESSAGE::Decrypt(b64_cipher, keys.private_key, RSA::OutputFormat::Base64);
+
+    std::cout << "Hex decrypted: " << hex_plain << std::endl;
+    std::cout << "Base64 decrypted: " << b64_plain << std::endl;
+}
+```
+
+---
+
+### 5. Quick Reference — Loading Keys
+
+```cpp
+// To use keys immediately after generation:
+RSA::KeyPair keys = RSA::GenerateKeyPair(RSA::KeySize::Bits2048);
+// Use keys.public_key and keys.private_key directly.
+
+// To use keys stored in files:
+auto pub = RSA::RSAPublicKey::load_pem("public.pem");
+auto priv = RSA::RSAPrivateKey::load_pem("private.pem");
+// Use pub and priv as above.
+```
+
+---
+
+**Tip:**  
+- You can use keys immediately after generating them (in-memory), or save them to PEM files and later load them from disk as needed.
+- Both approaches are supported throughout the API for flexibility.
+
 
 ### Command-Line Tool Usage
 
