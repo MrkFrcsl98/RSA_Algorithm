@@ -549,14 +549,15 @@ __attr_hot static inline void rsa_generate_keypair(RSAKeyPair * const kp, const 
 }
 
 // ========== ENCRYPTION/DECRYPTION ==========
-__attr_nodiscard __attr_hot static inline int rsa_encrypt(const uint8_t * __restrict__ message, const size_t mlen, const RSAPublicKey * const pub, uint8_t * __restrict__ out, size_t * const outlen) __noexcept
+__attr_nodiscard __attr_hot static inline int rsa_encrypt(const uint8_t * __restrict__ message, const size_t mlen, const RSAPublicKey * const pub, uint8_t * __restrict__ out, size_t * const outlen)
 {
-    if (unlikely(!message || !pub || !out || !outlen))
+    if (unlikely(!message || !pub || !outlen))
     {
         fprintf(stderr, "NULL pointer argument to rsa_encrypt\n");
         return 0;
     }
     const size_t mod_bytes = (mpz_sizeinbase(pub->n, 2) + 7) / 8;
+    if (!out) { *outlen = mod_bytes; return 1; } // Query mode
     uint8_t * const block = (uint8_t *)SAFE_MALLOC(mod_bytes);
     if (unlikely(!pkcs1_pad(message, mlen, block, mod_bytes)))
     {
@@ -585,7 +586,7 @@ __attr_nodiscard __attr_hot static inline int rsa_encrypt(const uint8_t * __rest
     return 1;
 }
 
-__attr_nodiscard __attr_hot static inline int rsa_decrypt(const uint8_t * __restrict__ enc, const size_t enclen, const RSAPrivateKey * const priv, uint8_t * __restrict__ out, size_t * const outlen) __noexcept
+__attr_nodiscard __attr_hot static inline int rsa_decrypt(const uint8_t * __restrict__ enc, const size_t enclen, const RSAPrivateKey * const priv, uint8_t * __restrict__ out, size_t * const outlen)
 {
     if (unlikely(!enc || !priv || !out || !outlen))
     {
@@ -686,6 +687,108 @@ __attr_nodiscard __attr_hot static inline int rsa_private_key_save_pem(const cha
     const int r = write_text(filename, pem);
     SECURE_FREE(pem, strlen(pem));
     return r;
+}
+
+// ========== DER PARSING HELPERS & LOADERS ==========
+// Minimalist DER parser for INTEGER and SEQUENCE, not robust, only for trusted PKCS#1 keys.
+__attr_hot static inline int der_read_tag_len(const uint8_t *buf, size_t buflen, size_t *offset, uint8_t *tag, size_t *len)
+{
+    if (*offset + 2 > buflen) return 0;
+    *tag = buf[*offset];
+    (*offset)++;
+    uint8_t l = buf[*offset];
+    (*offset)++;
+    if (l & 0x80) {
+        size_t n = l & 0x7F;
+        if (n > sizeof(size_t) || *offset + n > buflen) return 0;
+        *len = 0;
+        for (size_t i = 0; i < n; ++i) {
+            *len = (*len << 8) | buf[*offset];
+            (*offset)++;
+        }
+    } else {
+        *len = l;
+    }
+    if (*offset + *len > buflen) return 0;
+    return 1;
+}
+
+__attr_hot static inline int der_read_integer(const uint8_t *buf, size_t buflen, size_t *offset, mpz_t out)
+{
+    uint8_t tag = 0; size_t len = 0;
+    if (!der_read_tag_len(buf, buflen, offset, &tag, &len) || tag != 0x02) return 0;
+    mpz_import(out, len, 1, 1, 1, 0, buf + *offset);
+    *offset += len;
+    return 1;
+}
+
+__attr_hot static inline int der_expect_sequence(const uint8_t *buf, size_t buflen, size_t *offset, size_t *seqlen)
+{
+    uint8_t tag = 0;
+    if (!der_read_tag_len(buf, buflen, offset, &tag, seqlen)) return 0;
+    if (tag != 0x30) return 0;
+    return 1;
+}
+
+__attr_hot static inline int rsa_public_key_load_pem(const char *filename, RSAPublicKey *pub)
+{
+    size_t pemlen = 0;
+    char *pem = (char*)read_file(filename, &pemlen);
+    if (!pem) return 0;
+    char *b64 = strip_pem(pem);
+    SECURE_FREE(pem, pemlen);
+    if (!b64) return 0;
+    size_t derlen = 0;
+    uint8_t *der = base64_decode(b64, &derlen);
+    SECURE_FREE(b64, strlen(b64));
+    if (!der) return 0;
+
+    size_t off = 0, seqlen = 0;
+    rsa_public_key_init(pub);
+    int ok = 0;
+    if (der_expect_sequence(der, derlen, &off, &seqlen) &&
+        der_read_integer(der, derlen, &off, pub->n) &&
+        der_read_integer(der, derlen, &off, pub->e))
+        ok = 1;
+
+    SECURE_FREE(der, derlen);
+    if (!ok) rsa_public_key_clear(pub);
+    return ok;
+}
+
+__attr_hot static inline int rsa_private_key_load_pem(const char *filename, RSAPrivateKey *priv)
+{
+    size_t pemlen = 0;
+    char *pem = (char*)read_file(filename, &pemlen);
+    if (!pem) return 0;
+    char *b64 = strip_pem(pem);
+    SECURE_FREE(pem, pemlen);
+    if (!b64) return 0;
+    size_t derlen = 0;
+    uint8_t *der = base64_decode(b64, &derlen);
+    SECURE_FREE(b64, strlen(b64));
+    if (!der) return 0;
+
+    size_t off = 0, seqlen = 0;
+    rsa_private_key_init(priv);
+    mpz_t version; mpz_init(version);
+    int ok = 0;
+    if (der_expect_sequence(der, derlen, &off, &seqlen) &&
+        der_read_integer(der, derlen, &off, version) && // version
+        der_read_integer(der, derlen, &off, priv->n) &&
+        der_read_integer(der, derlen, &off, priv->e) &&
+        der_read_integer(der, derlen, &off, priv->d) &&
+        der_read_integer(der, derlen, &off, priv->p) &&
+        der_read_integer(der, derlen, &off, priv->q) &&
+        der_read_integer(der, derlen, &off, priv->dP) &&
+        der_read_integer(der, derlen, &off, priv->dQ) &&
+        der_read_integer(der, derlen, &off, priv->qInv))
+        ok = 1;
+    mpz_clear(version);
+
+    SECURE_FREE(der, derlen);
+    if (!ok) rsa_private_key_clear(priv);
+    return ok;
 }
 
 #endif // RSA_ALGORITHM_C_H
