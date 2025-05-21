@@ -370,14 +370,64 @@ inline std::string encode_by_format(const std::vector<uint8_t>& in, OutputFormat
 }
 } // namespace INTERNAL
 
+// ======= Chaining Result Wrappers =======
+class EncryptedResult {
+    std::vector<uint8_t> raw;
+    OutputFormat format;
+public:
+    EncryptedResult(std::vector<uint8_t> rawData)
+        : raw(std::move(rawData)), format(OutputFormat::Binary) {}
+
+    EncryptedResult& toFormat(OutputFormat fmt) {
+        format = fmt;
+        return *this;
+    }
+    std::string toString() const {
+        switch (format) {
+            case OutputFormat::Hex:
+                return UTIL::bytes_to_hex(raw);
+            case OutputFormat::Base64:
+                return PEM_DER::base64_encode(raw);
+            case OutputFormat::Binary:
+            default:
+                return std::string(raw.begin(), raw.end());
+        }
+    }
+    std::vector<uint8_t> toVector() const {
+        return raw;
+    }
+    OutputFormat getFormat() const { return format; }
+};
+
+class DecryptedResult {
+    std::vector<uint8_t> raw;
+public:
+    DecryptedResult(std::vector<uint8_t> rawData)
+        : raw(std::move(rawData)) {}
+
+    std::string toString() const {
+        return std::string(raw.begin(), raw.end());
+    }
+    std::vector<uint8_t> toVector() const {
+        return raw;
+    }
+};
+
 // ======= MESSAGE API =======
 namespace MESSAGE {
-inline std::string Encrypt(const std::string& message, const RSAPublicKey& pub, OutputFormat fmt) {
+inline EncryptedResult Encrypt(const std::string& message, const RSAPublicKey& pub) {
     if (message.empty()) throw std::runtime_error("Message is empty.");
     auto blocks = INTERNAL::encrypt_blocks(std::vector<uint8_t>(message.begin(), message.end()), pub);
     size_t mod_bytes = (mpz_sizeinbase(pub.n.get_mpz_t(), 2) + 7) / 8;
     auto as_bytes = INTERNAL::cts_to_bytes(blocks, mod_bytes);
-    return INTERNAL::encode_by_format(as_bytes, fmt);
+    return EncryptedResult(as_bytes);
+}
+inline DecryptedResult Decrypt(const EncryptedResult& enc, const RSAPrivateKey& priv) {
+    auto raw = enc.toVector();
+    size_t mod_bytes = (mpz_sizeinbase(priv.n.get_mpz_t(), 2) + 7) / 8;
+    auto blocks = INTERNAL::bytes_to_cts(raw, mod_bytes);
+    auto message = INTERNAL::decrypt_blocks(blocks, priv);
+    return DecryptedResult(message);
 }
 inline std::string Decrypt(const std::string& encoded, const RSAPrivateKey& priv, OutputFormat fmt) {
     auto raw = INTERNAL::decode_by_format(encoded, fmt);
@@ -401,8 +451,10 @@ inline void Encrypt(const std::string& inputFile, const std::string& outputFile,
     auto as_bytes = INTERNAL::cts_to_bytes(blocks, mod_bytes);
     if (fmt == OutputFormat::Binary)
         UTIL::write_file(outputFile, as_bytes);
-    else
-        UTIL::write_text(outputFile, INTERNAL::encode_by_format(as_bytes, fmt));
+    else if (fmt == OutputFormat::Hex)
+        UTIL::write_text(outputFile, UTIL::bytes_to_hex(as_bytes));
+    else if (fmt == OutputFormat::Base64)
+        UTIL::write_text(outputFile, PEM_DER::base64_encode(as_bytes));
 }
 inline void Decrypt(const std::string& inputFile, const std::string& outputFile,
              const RSAPrivateKey& priv, OutputFormat fmt) {
@@ -415,7 +467,10 @@ inline void Decrypt(const std::string& inputFile, const std::string& outputFile,
         std::ifstream file(inputFile);
         if (!file) throw std::runtime_error("Cannot open encrypted file: " + inputFile);
         std::ostringstream ss; ss << file.rdbuf();
-        raw = INTERNAL::decode_by_format(ss.str(), fmt);
+        if (fmt == OutputFormat::Hex)
+            raw = UTIL::hex_to_bytes(ss.str());
+        else if (fmt == OutputFormat::Base64)
+            raw = PEM_DER::base64_decode(ss.str());
     }
     size_t mod_bytes = (mpz_sizeinbase(priv.n.get_mpz_t(), 2) + 7) / 8;
     auto blocks = INTERNAL::bytes_to_cts(raw, mod_bytes);
