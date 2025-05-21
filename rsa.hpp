@@ -310,10 +310,11 @@ public:
     }
 };
 
-// -- File Handler (for completeness; can call encryptor/decryptor plus formatters) --
+// -- File Handler (extended for storing/retrieving all formats) --
 
 class RSAFileHandler {
 public:
+    // Encrypt file and save ciphertext in specified format
     static void encrypt_file(const std::string& in_filename, const std::string& out_filename, const RSAPublicKey& pub, const OutputFormat& format = OutputFormat::HEX) {
         RSAEncryptor enc(pub);
         auto result = enc.encrypt(in_filename);
@@ -322,26 +323,127 @@ public:
         else if (format == OutputFormat::RAW) result.saveRawToFile(out_filename);
         else throw std::runtime_error("Unknown encryption file format!");
     }
-    static void decrypt_file(const std::string& in_filename, const std::string& out_filename, const RSAPrivateKey& priv, const OutputFormat& format = OutputFormat::HEX, size_t block_size = 0) {
+    // Decrypt file and save plaintext as binary
+ static void decrypt_file(const std::string& in_filename, const std::string& out_filename, const RSAPrivateKey& priv, const OutputFormat& format = OutputFormat::HEX, size_t block_size = 0) {
         RSADecryptor dec(priv);
-        std::ifstream in(in_filename, std::ios::binary);
-        if (!in) throw std::runtime_error("Cannot open ciphertext file: " + in_filename);
-        std::stringstream buffer;
-        buffer << in.rdbuf();
         if (format == OutputFormat::HEX) {
+            std::ifstream in(in_filename, std::ios::in);
+            if (!in) throw std::runtime_error("Cannot open ciphertext file: " + in_filename);
+            std::stringstream buffer;
+            buffer << in.rdbuf();
             auto result = dec.decryptFromHex(buffer.str());
             result.saveToFile(out_filename);
         } else if (format == OutputFormat::BASE64) {
             if (block_size == 0) throw std::runtime_error("block_size required for base64 decryption");
+            std::ifstream in(in_filename, std::ios::in);
+            if (!in) throw std::runtime_error("Cannot open ciphertext file: " + in_filename);
+            std::stringstream buffer;
+            buffer << in.rdbuf();
             auto result = dec.decryptFromBase64(buffer.str(), block_size);
             result.saveToFile(out_filename);
         } else if (format == OutputFormat::RAW) {
-            throw std::runtime_error("raw decryption format not implemented in this demo");
+            if (block_size == 0) throw std::runtime_error("block_size required for raw decryption");
+            // RAW: Read the binary file and extract blocks directly
+            auto all_bytes = RSAUtils::read_file(in_filename);
+            std::vector<mpz_class> blocks;
+            for (size_t i = 0; i < all_bytes.size(); i += block_size) {
+                std::vector<uint8_t> sub(all_bytes.begin() + i, all_bytes.begin() + std::min(all_bytes.size(), i + block_size));
+                blocks.push_back(RSAUtils::bytes_to_mpz(sub));
+            }
+            auto result = dec.decrypt(blocks);
+            result.saveToFile(out_filename);
         } else {
             throw std::runtime_error("Unknown decryption file format!");
+        }
+    }
+
+    // ====== Extensions for loading/storing ciphertext and plaintext ======
+
+    // --- Ciphertext Loaders ---
+
+    // Load ciphertext as vector<mpz_class> from hex file
+    static std::vector<mpz_class> loadHexCiphertext(const std::string& filename) {
+        std::ifstream in(filename);
+        if (!in) throw std::runtime_error("Cannot open ciphertext file: " + filename);
+        std::stringstream buffer;
+        buffer << in.rdbuf();
+        return RSAEncryptor::hexToBlocks(buffer.str());
+    }
+
+    // Load ciphertext as vector<mpz_class> from base64 file
+    static std::vector<mpz_class> loadBase64Ciphertext(const std::string& filename, size_t block_size) {
+        std::ifstream in(filename);
+        if (!in) throw std::runtime_error("Cannot open ciphertext file: " + filename);
+        std::stringstream buffer;
+        buffer << in.rdbuf();
+        return RSAEncryptor::base64ToBlocks(buffer.str(), block_size);
+    }
+
+    // Load ciphertext as vector<mpz_class> from raw binary file
+    static std::vector<mpz_class> loadRawCiphertext(const std::string& filename, size_t block_size) {
+        auto all_bytes = RSAUtils::read_file(filename);
+        std::vector<mpz_class> blocks;
+        for (size_t i = 0; i < all_bytes.size(); i += block_size) {
+            std::vector<uint8_t> sub(all_bytes.begin() + i, all_bytes.begin() + std::min(all_bytes.size(), i+block_size));
+            blocks.push_back(RSAUtils::bytes_to_mpz(sub));
+        }
+        return blocks;
+    }
+
+    // --- Plaintext Loaders ---
+
+    // Load plaintext as vector<uint8_t> from binary file
+    static std::vector<uint8_t> loadRawPlaintext(const std::string& filename) {
+        return RSAUtils::read_file(filename);
+    }
+
+    // Load plaintext as vector<uint8_t> from hex file
+    static std::vector<uint8_t> loadHexPlaintext(const std::string& filename) {
+        std::ifstream in(filename);
+        if (!in) throw std::runtime_error("Cannot open hex file: " + filename);
+        std::stringstream buffer;
+        buffer << in.rdbuf();
+        return RSAUtils::hex_to_bytes(buffer.str());
+    }
+
+    // Load plaintext as vector<uint8_t> from base64 file
+    static std::vector<uint8_t> loadBase64Plaintext(const std::string& filename) {
+        std::ifstream in(filename);
+        if (!in) throw std::runtime_error("Cannot open base64 file: " + filename);
+        std::stringstream buffer;
+        buffer << in.rdbuf();
+        return RSAUtils::base64_decode(buffer.str());
+    }
+
+    // --- General Loader for Ciphertext based on OutputFormat ---
+    static std::vector<mpz_class> loadCiphertext(const std::string& filename, OutputFormat format, size_t block_size = 0) {
+        switch(format) {
+            case OutputFormat::HEX:
+                return loadHexCiphertext(filename);
+            case OutputFormat::BASE64:
+                if (block_size == 0) throw std::runtime_error("block_size required for base64");
+                return loadBase64Ciphertext(filename, block_size);
+            case OutputFormat::RAW:
+                if (block_size == 0) throw std::runtime_error("block_size required for raw");
+                return loadRawCiphertext(filename, block_size);
+            default:
+                throw std::runtime_error("Unknown format");
+        }
+    }
+
+    // --- General Loader for Plaintext based on OutputFormat ---
+    static std::vector<uint8_t> loadPlaintext(const std::string& filename, OutputFormat format) {
+        switch(format) {
+            case OutputFormat::HEX:
+                return loadHexPlaintext(filename);
+            case OutputFormat::BASE64:
+                return loadBase64Plaintext(filename);
+            case OutputFormat::RAW:
+                return loadRawPlaintext(filename);
+            default:
+                throw std::runtime_error("Unknown format");
         }
     }
 };
 
 } // namespace RSA_Cipher
-
