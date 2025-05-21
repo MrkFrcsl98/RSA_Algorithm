@@ -246,6 +246,25 @@ class RSAPublicKey
         auto der = PEM_DER::base64_decode(PEM_DER::strip_pem(pem));
         return from_der(der);
     }
+
+    // New: Save/load methods
+    void save_pem(const std::string& filename) const {
+        std::ofstream(filename) << to_pem();
+    }
+    void save_der(const std::string& filename) const {
+        auto der = to_der();
+        std::ofstream(filename, std::ios::binary).write(reinterpret_cast<const char*>(der.data()), der.size());
+    }
+    static RSAPublicKey load_pem(const std::string& filename) {
+        std::ifstream f(filename);
+        std::ostringstream ss; ss << f.rdbuf();
+        return from_pem(ss.str());
+    }
+    static RSAPublicKey load_der(const std::string& filename) {
+        std::ifstream f(filename, std::ios::binary);
+        std::vector<uint8_t> buf((std::istreambuf_iterator<char>(f)), {});
+        return from_der(buf);
+    }
 };
 
 class RSAPrivateKey
@@ -298,12 +317,47 @@ class RSAPrivateKey
         auto der = PEM_DER::base64_decode(PEM_DER::strip_pem(pem));
         return from_der(der);
     }
+
+    // New: Save/load methods
+    void save_pem(const std::string& filename) const {
+        std::ofstream(filename) << to_pem();
+    }
+    void save_der(const std::string& filename) const {
+        auto der = to_der();
+        std::ofstream(filename, std::ios::binary).write(reinterpret_cast<const char*>(der.data()), der.size());
+    }
+    static RSAPrivateKey load_pem(const std::string& filename) {
+        std::ifstream f(filename);
+        std::ostringstream ss; ss << f.rdbuf();
+        return from_pem(ss.str());
+    }
+    static RSAPrivateKey load_der(const std::string& filename) {
+        std::ifstream f(filename, std::ios::binary);
+        std::vector<uint8_t> buf((std::istreambuf_iterator<char>(f)), {});
+        return from_der(buf);
+    }
 };
 
 struct RSAKeyPair
 {
     RSAPublicKey public_key;
     RSAPrivateKey private_key;
+
+    // New: Save/load methods for the key pair
+    void save_pem(const std::string& pubfile, const std::string& privfile) const {
+        public_key.save_pem(pubfile);
+        private_key.save_pem(privfile);
+    }
+    void save_der(const std::string& pubfile, const std::string& privfile) const {
+        public_key.save_der(pubfile);
+        private_key.save_der(privfile);
+    }
+    static RSAKeyPair load_pem(const std::string& pubfile, const std::string& privfile) {
+        return {RSAPublicKey::load_pem(pubfile), RSAPrivateKey::load_pem(privfile)};
+    }
+    static RSAKeyPair load_der(const std::string& pubfile, const std::string& privfile) {
+        return {RSAPublicKey::load_der(pubfile), RSAPrivateKey::load_der(privfile)};
+    }
 };
 
 class RSAKeyGenerator
