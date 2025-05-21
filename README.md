@@ -457,4 +457,3 @@ MIT License (see [LICENSE](LICENSE) file).
 
 **Warning:**  
 Do NOT use this implementation for protecting real secrets or in production systems. For professional cryptography, use vetted libraries and protocols.
-```
