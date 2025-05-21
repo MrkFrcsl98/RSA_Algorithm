@@ -477,6 +477,10 @@ class RSAFileHandler
         auto result = enc.encrypt(in_filename);
         result.saveRawToFile(out_filename);
     }
+    static void decrypt_file(const std::string &in_filename, const std::string &out_filename, const RSAPrivateKey &priv) {
+    size_t block_size = (mpz_sizeinbase(priv.n.get_mpz_t(), 2) + 7) / 8;
+    decrypt_file(in_filename, out_filename, priv, block_size);
+    }
     static void decrypt_file(const std::string &in_filename, const std::string &out_filename, const RSAPrivateKey &priv, size_t block_size)
     {
         RSADecryptor dec(priv);
