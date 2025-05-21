@@ -3,12 +3,34 @@
 #include <fstream>
 #include <thread>
 #include <chrono>
+#include <vector>
+#include <cstring>
 
 using namespace RSA;
-void delay() { std::this_thread::sleep_for(std::chrono::milliseconds(500)); }
-void print_result(const std::string& msg, bool ok) {
-    std::cout << msg << (ok ? " [SUCCESS]" : " [FAILURE]") << std::endl;
+
+// ANSI color codes
+const char* GREEN = "\033[32m";
+const char* RED = "\033[31m";
+const char* YELLOW = "\033[33m";
+const char* RESET = "\033[0m";
+
+void delay() { std::this_thread::sleep_for(std::chrono::milliseconds(300)); }
+
+void print_result(const std::string& msg, bool ok, bool warning = false) {
+    if(ok && !warning)
+        std::cout << GREEN << msg << " [SUCCESS]" << RESET << std::endl;
+    else if(ok && warning)
+        std::cout << YELLOW << msg << " [WARNING]" << RESET << std::endl;
+    else
+        std::cout << RED << msg << " [FAILURE]" << RESET << std::endl;
     delay();
+}
+
+// Utility: Compare two files
+bool files_equal(const std::string& f1, const std::string& f2) {
+    std::ifstream a(f1, std::ios::binary), b(f2, std::ios::binary);
+    std::istreambuf_iterator<char> ia(a), ib(b), end;
+    return std::vector<char>(ia, end) == std::vector<char>(ib, end);
 }
 
 int main() {
@@ -16,7 +38,7 @@ int main() {
         // ===== 1. Key Generation, Storage, and Loading =====
         std::cout << "Generating 2048-bit RSA key pair..." << std::endl; delay();
         KeyPair keys = GenerateKeyPair(KeySize::Bits2048);
-        print_result("Key generation", true);
+        print_result("Key generation (2048 bits)", true);
 
         keys.public_key.save_pem("test_public.pem");
         keys.private_key.save_pem("test_private.pem");
@@ -36,7 +58,12 @@ int main() {
         catch (...) { failLoad = true; }
         print_result("Loading from non-existent PEM fails", failLoad);
 
-        // ===== 2. Message Encryption/Decryption: Basic, Empty, Special, Large =====
+        // Test with 1024-bit key
+        std::cout << "Generating 1024-bit RSA key pair..." << std::endl; delay();
+        KeyPair keys1024 = GenerateKeyPair(KeySize::Bits1024);
+        print_result("Key generation (1024 bits)", true);
+
+        // ===== 2. Message Encryption/Decryption: Basic, Edge, Large, Unicode, Binary =====
         RSAPublicKey pub = RSAPublicKey::load_pem("test_public.pem");
         RSAPrivateKey priv = RSAPrivateKey::load_pem("test_private.pem");
         delay();
@@ -44,7 +71,6 @@ int main() {
         // 2.1 Simple message
         std::string msg = "Hello, RSA!";
         auto enc = MESSAGE::Encrypt(msg, pub);
-        std::string encBase64 = enc.toFormat(OutputFormat::Base64).toString();
         auto dec = MESSAGE::Decrypt(enc.toFormat(OutputFormat::Binary), priv);
         print_result("Simple message roundtrip", dec.toString() == msg);
 
@@ -60,18 +86,39 @@ int main() {
         auto dec2 = MESSAGE::Decrypt(enc2.toFormat(OutputFormat::Binary), priv);
         print_result("Special chars message roundtrip", dec2.toString() == msg2);
 
-        // 2.4 Large message (longer than modulus, should still work char-by-char)
+        // 2.4 Large message (300 bytes)
         std::string large(300, 'A');
         auto enc3 = MESSAGE::Encrypt(large, pub);
         auto dec3 = MESSAGE::Decrypt(enc3, priv);
         print_result("Large message roundtrip", dec3.toString() == large);
 
-        // ===== 3. Chaining Output Formats, toString, toVector, Roundtrip =====
+        // 2.5 Binary data
+        std::string binmsg = std::string("\0\1\2\3\4\5\6\7\0\xff", 10);
+        auto enc4 = MESSAGE::Encrypt(binmsg, pub);
+        auto dec4 = MESSAGE::Decrypt(enc4, priv);
+        print_result("Binary data roundtrip", dec4.toString() == binmsg);
+
+        // 2.6 Unicode edge (emoji)
+        std::string emoji = "Test 🚀🔒";
+        auto enc5 = MESSAGE::Encrypt(emoji, pub);
+        auto dec5 = MESSAGE::Decrypt(enc5, priv);
+        print_result("Emoji message roundtrip", dec5.toString() == emoji);
+
+        // 2.7 Repeated encrypt/decrypt
+        bool repeat_ok = true;
+        std::string rmsg = "Repeat test!";
+        for(int i=0;i<10;++i) {
+            auto e = MESSAGE::Encrypt(rmsg, pub);
+            auto d = MESSAGE::Decrypt(e, priv);
+            if(d.toString() != rmsg) { repeat_ok = false; break; }
+        }
+        print_result("Repeated encrypt/decrypt", repeat_ok);
+
+        // ===== 3. Output Formats: HEX, BASE64, BINARY =====
         // HEX
         auto encHex = enc.toFormat(OutputFormat::Hex);
         std::string hexStr = encHex.toString();
-        auto encFromHex = MESSAGE::Encrypt(msg, pub).toFormat(OutputFormat::Hex).toString();
-        auto decHex = MESSAGE::Decrypt(EncryptedResult(RSA::UTIL::hex_to_bytes(encFromHex)), priv);
+        auto decHex = MESSAGE::Decrypt(EncryptedResult(RSA::UTIL::hex_to_bytes(hexStr)), priv);
         print_result("HEX format roundtrip", decHex.toString() == msg);
 
         // BASE64
@@ -85,7 +132,7 @@ int main() {
         auto decBin = MESSAGE::Decrypt(EncryptedResult(binVec), priv);
         print_result("BINARY format roundtrip", decBin.toString() == msg);
 
-        // ===== 4. File Encryption/Decryption: All Formats, Error Cases =====
+        // ===== 4. File Encryption/Decryption: All Formats, Edge, Error Cases =====
         std::ofstream testfile("test_input.txt");
         testfile << "This is a test file for RSA file encryption!";
         testfile.close();
@@ -94,23 +141,17 @@ int main() {
         // Encrypt/Decrypt (Base64)
         RSA::FILE::Encrypt("test_input.txt", "enc_b64.txt", pub, OutputFormat::Base64);
         RSA::FILE::Decrypt("enc_b64.txt", "dec_b64.txt", priv, OutputFormat::Base64);
-        std::ifstream f1("dec_b64.txt");
-        std::string r1((std::istreambuf_iterator<char>(f1)), {});
-        print_result("File roundtrip (Base64)", r1 == "This is a test file for RSA file encryption!");
+        print_result("File roundtrip (Base64)", files_equal("test_input.txt", "dec_b64.txt"));
 
         // Encrypt/Decrypt (Hex)
         RSA::FILE::Encrypt("test_input.txt", "enc_hex.txt", pub, OutputFormat::Hex);
         RSA::FILE::Decrypt("enc_hex.txt", "dec_hex.txt", priv, OutputFormat::Hex);
-        std::ifstream f2("dec_hex.txt");
-        std::string r2((std::istreambuf_iterator<char>(f2)), {});
-        print_result("File roundtrip (Hex)", r2 == "This is a test file for RSA file encryption!");
+        print_result("File roundtrip (Hex)", files_equal("test_input.txt", "dec_hex.txt"));
 
         // Encrypt/Decrypt (Binary)
         RSA::FILE::Encrypt("test_input.txt", "enc_bin.bin", pub, OutputFormat::Binary);
         RSA::FILE::Decrypt("enc_bin.bin", "dec_bin.txt", priv, OutputFormat::Binary);
-        std::ifstream f3("dec_bin.txt");
-        std::string r3((std::istreambuf_iterator<char>(f3)), {});
-        print_result("File roundtrip (Binary)", r3 == "This is a test file for RSA file encryption!");
+        print_result("File roundtrip (Binary)", files_equal("test_input.txt", "dec_bin.txt"));
 
         // Try encrypting non-existent file
         bool fileFail = false;
@@ -124,13 +165,11 @@ int main() {
         catch (...) { fileFail2 = true; }
         print_result("Decrypt non-existent file fails", fileFail2);
 
-        // ===== 5. Error Handling: Wrong Key, Invalid Format =====
-        // Generate a new, different keypair
+        // ===== 5. Error Handling: Wrong Key, Invalid Format, Invalid PEM =====
         KeyPair wrongKeys = GenerateKeyPair(KeySize::Bits1024);
         bool wrongKeyFail = false;
         try {
             auto badDec = MESSAGE::Decrypt(enc.toFormat(OutputFormat::Binary), wrongKeys.private_key);
-            // It may produce garbage, so check by comparing to original
             wrongKeyFail = (badDec.toString() != msg);
         } catch (...) { wrongKeyFail = true; }
         print_result("Decrypt with wrong key fails or yields incorrect result", wrongKeyFail);
@@ -142,6 +181,12 @@ int main() {
         } catch (...) { badFormat = true; }
         print_result("Decode by invalid format fails", badFormat);
 
+        // Invalid PEM
+        bool badPEM = false;
+        try { RSAPublicKey::from_pem("NOT_A_PEM"); }
+        catch (...) { badPEM = true; }
+        print_result("Invalid PEM input fails", badPEM);
+
         // ===== 6. PEM Export/Import of Keys, Validate Equality =====
         std::string pubPEM = keys.public_key.to_pem();
         std::string privPEM = keys.private_key.to_pem();
@@ -150,9 +195,9 @@ int main() {
         print_result("PEM import/export (public key)", pub2.n == keys.public_key.n && pub2.e == keys.public_key.e);
         print_result("PEM import/export (private key)", priv2.n == keys.private_key.n && priv2.d == keys.private_key.d);
 
-        std::cout << "All tests completed!" << std::endl;
+        std::cout << GREEN << "All tests completed!" << RESET << std::endl;
     } catch (const std::exception& ex) {
-        std::cout << "Exception occurred: " << ex.what() << std::endl;
+        std::cout << RED << "Exception occurred: " << ex.what() << RESET << std::endl;
     }
     return 0;
 }
