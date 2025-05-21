@@ -12,15 +12,15 @@
 #include <time.h>
 
 #if defined(__GNUC__) || defined(__clang__)
-#define ATTR_NODISCARD __attribute__((warn_unused_result))
-#define ATTR_MALLOC __attribute__((malloc))
-#define ATTR_HOT __attribute__((hot))
-#define ATTR_COLD __attribute__((cold))
+#define __attr_nodiscard __attribute__((warn_unused_result))
+#define __attr_malloc __attribute__((malloc))
+#define __attr_hot __attribute__((hot))
+#define __attr_cold __attribute__((cold))
 #else
-#define ATTR_NODISCARD
-#define ATTR_MALLOC
-#define ATTR_HOT
-#define ATTR_COLD
+#define __attr_nodiscard
+#define __attr_malloc
+#define __attr_hot
+#define __attr_cold
 #endif
 
 // ===== ENUMS =====
@@ -57,33 +57,30 @@ typedef struct
 } RSAKeyPair;
 
 // ========== Utility Memory ==========
-
-#define SECURE_FREE(p, sz)                                                                                                                                               \
-    do                                                                                                                                                                   \
-    {                                                                                                                                                                    \
-        if (p)                                                                                                                                                           \
-        {                                                                                                                                                                \
-            volatile unsigned char *vp = (volatile unsigned char *)(p);                                                                                                  \
-            for (size_t _i = 0; _i < (sz); ++_i)                                                                                                                         \
-                vp[_i] = 0;                                                                                                                                              \
-            free((void *)p);                                                                                                                                             \
-        }                                                                                                                                                                \
+#define SECURE_FREE(p, sz) \
+    do \
+    { \
+        if (p) \
+        { \
+            volatile unsigned char *vp = (volatile unsigned char *)(p); \
+            for (size_t _i = 0; _i < (sz); ++_i) \
+                vp[_i] = 0; \
+            free((void *)p); \
+        } \
     } while (0)
-#define SAFE_MALLOC(size)                                                                                                                                                \
-    ({                                                                                                                                                                   \
-        void *_p = malloc(size);                                                                                                                                         \
-        if (!_p)                                                                                                                                                         \
-        {                                                                                                                                                                \
-            fprintf(stderr, "Out of memory at %s:%d\n", __FILE__, __LINE__);                                                                                             \
-            abort();                                                                                                                                                     \
-        }                                                                                                                                                                \
-        _p;                                                                                                                                                              \
+#define SAFE_MALLOC(size) \
+    ({ \
+        void *_p = malloc(size); \
+        if (!_p) \
+        { \
+            fprintf(stderr, "Out of memory at %s:%d\n", __FILE__, __LINE__); \
+            abort(); \
+        } \
+        _p; \
     })
 
 // ========== ASN.1 DER ==========
-
-static inline void encode_integer(const mpz_t x, uint8_t **out, size_t *outlen) ATTR_HOT;
-static inline void encode_integer(const mpz_t x, uint8_t **out, size_t *outlen)
+__attr_hot static inline void encode_integer(const mpz_t x, uint8_t **out, size_t *outlen)
 {
     size_t count = (mpz_sizeinbase(x, 2) + 7) / 8;
     if (count == 0)
@@ -105,8 +102,7 @@ static inline void encode_integer(const mpz_t x, uint8_t **out, size_t *outlen)
     SECURE_FREE(bytes, count + 1); // always free at least count+1 for safety
 }
 
-static inline void encode_sequence(uint8_t **fields, const size_t *field_lens, size_t num_fields, uint8_t **out, size_t *outlen) ATTR_HOT;
-static inline void encode_sequence(uint8_t **fields, const size_t *field_lens, size_t num_fields, uint8_t **out, size_t *outlen)
+__attr_hot static inline void encode_sequence(uint8_t **fields, const size_t *field_lens, size_t num_fields, uint8_t **out, size_t *outlen)
 {
     size_t seqlen = 0;
     for (size_t i = 0; i < num_fields; ++i)
@@ -124,11 +120,9 @@ static inline void encode_sequence(uint8_t **fields, const size_t *field_lens, s
 }
 
 // ========== BASE64 ENCODE/DECODE ==========
-
 static const char b64_table[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
-static inline char *base64_encode(const uint8_t *in, size_t inlen) ATTR_MALLOC ATTR_NODISCARD ATTR_HOT;
-static inline char *base64_encode(const uint8_t *in, size_t inlen)
+__attr_malloc __attr_nodiscard __attr_hot static inline char *base64_encode(const uint8_t *in, size_t inlen)
 {
     size_t outlen = 4 * ((inlen + 2) / 3);
     char *out = (char *)SAFE_MALLOC(outlen + 1);
@@ -148,8 +142,7 @@ static inline char *base64_encode(const uint8_t *in, size_t inlen)
     return out;
 }
 
-static inline uint8_t *base64_decode(const char *in, size_t *outlen) ATTR_MALLOC ATTR_NODISCARD ATTR_HOT;
-static inline uint8_t *base64_decode(const char *in, size_t *outlen)
+__attr_malloc __attr_nodiscard __attr_hot static inline uint8_t *base64_decode(const char *in, size_t *outlen)
 {
     int dtable[256] = {0};
     for (size_t i = 0; i < 64; i++)
@@ -191,8 +184,7 @@ static inline uint8_t *base64_decode(const char *in, size_t *outlen)
 }
 
 // PEM WRAP/UNWRAP
-static inline char *pem_wrap(const char *base64, const char *type) ATTR_MALLOC ATTR_NODISCARD ATTR_HOT;
-static inline char *pem_wrap(const char *base64, const char *type)
+__attr_malloc __attr_nodiscard __attr_hot static inline char *pem_wrap(const char *base64, const char *type)
 {
     size_t typelen = strlen(type);
     size_t b64len = strlen(base64);
@@ -211,8 +203,7 @@ static inline char *pem_wrap(const char *base64, const char *type)
     return out;
 }
 
-static inline char *strip_pem(const char *pem) ATTR_MALLOC ATTR_NODISCARD ATTR_HOT;
-static inline char *strip_pem(const char *pem)
+__attr_malloc __attr_nodiscard __attr_hot static inline char *strip_pem(const char *pem)
 {
     const char *begin = strstr(pem, "-----BEGIN");
     if (!begin)
@@ -238,9 +229,7 @@ static inline char *strip_pem(const char *pem)
 }
 
 // ========== HEX ENCODE/DECODE ==========
-
-static inline char *bytes_to_hex(const uint8_t *data, size_t len) ATTR_MALLOC ATTR_NODISCARD ATTR_HOT;
-static inline char *bytes_to_hex(const uint8_t *data, size_t len)
+__attr_malloc __attr_nodiscard __attr_hot static inline char *bytes_to_hex(const uint8_t *data, size_t len)
 {
     char *out = (char *)SAFE_MALLOC(len * 2 + 1);
     for (size_t i = 0; i < len; ++i)
@@ -249,8 +238,7 @@ static inline char *bytes_to_hex(const uint8_t *data, size_t len)
     return out;
 }
 
-static inline uint8_t *hex_to_bytes(const char *hex, size_t *outlen) ATTR_MALLOC ATTR_NODISCARD ATTR_HOT;
-static inline uint8_t *hex_to_bytes(const char *hex, size_t *outlen)
+__attr_malloc __attr_nodiscard __attr_hot static inline uint8_t *hex_to_bytes(const char *hex, size_t *outlen)
 {
     size_t len = strlen(hex) / 2;
     uint8_t *out = (uint8_t *)SAFE_MALLOC(len);
@@ -269,9 +257,7 @@ static inline uint8_t *hex_to_bytes(const char *hex, size_t *outlen)
 }
 
 // ========== FILE IO ==========
-
-static inline int file_exists(const char *filename) ATTR_HOT;
-static inline int file_exists(const char *filename)
+__attr_hot static inline int file_exists(const char *filename)
 {
     FILE *f = fopen(filename, "rb");
     if (f)
@@ -282,8 +268,7 @@ static inline int file_exists(const char *filename)
     return 0;
 }
 
-static inline uint8_t *read_file(const char *filename, size_t *len) ATTR_MALLOC ATTR_NODISCARD ATTR_HOT;
-static inline uint8_t *read_file(const char *filename, size_t *len)
+__attr_malloc __attr_nodiscard __attr_hot static inline uint8_t *read_file(const char *filename, size_t *len)
 {
     FILE *f = fopen(filename, "rb");
     if (!f)
@@ -319,8 +304,7 @@ static inline uint8_t *read_file(const char *filename, size_t *len)
     return buf;
 }
 
-static inline int write_file(const char *filename, const uint8_t *data, size_t len) ATTR_HOT;
-static inline int write_file(const char *filename, const uint8_t *data, size_t len)
+__attr_hot static inline int write_file(const char *filename, const uint8_t *data, size_t len)
 {
     FILE *f = fopen(filename, "wb");
     if (!f)
@@ -338,8 +322,7 @@ static inline int write_file(const char *filename, const uint8_t *data, size_t l
     return 1;
 }
 
-static inline int write_text(const char *filename, const char *text) ATTR_HOT;
-static inline int write_text(const char *filename, const char *text)
+__attr_hot static inline int write_text(const char *filename, const char *text)
 {
     FILE *f = fopen(filename, "w");
     if (!f)
@@ -358,9 +341,7 @@ static inline int write_text(const char *filename, const char *text)
 }
 
 // ========== RANDOM PRIME, MODINV, POWM ==========
-
-static inline void random_prime(mpz_t out, int bits, gmp_randstate_t rng) ATTR_HOT;
-static inline void random_prime(mpz_t out, int bits, gmp_randstate_t rng)
+__attr_hot static inline void random_prime(mpz_t out, int bits, gmp_randstate_t rng)
 {
     int tries = 0;
     while (1)
@@ -378,8 +359,7 @@ static inline void random_prime(mpz_t out, int bits, gmp_randstate_t rng)
     }
 }
 
-static inline void modinv(mpz_t out, const mpz_t a, const mpz_t m) ATTR_HOT;
-static inline void modinv(mpz_t out, const mpz_t a, const mpz_t m)
+__attr_hot static inline void modinv(mpz_t out, const mpz_t a, const mpz_t m)
 {
     if (!mpz_invert(out, a, m))
     {
@@ -388,16 +368,13 @@ static inline void modinv(mpz_t out, const mpz_t a, const mpz_t m)
     }
 }
 
-static inline void powm(mpz_t out, const mpz_t base, const mpz_t exp, const mpz_t mod) ATTR_HOT;
-static inline void powm(mpz_t out, const mpz_t base, const mpz_t exp, const mpz_t mod)
+__attr_hot static inline void powm(mpz_t out, const mpz_t base, const mpz_t exp, const mpz_t mod)
 {
     mpz_powm(out, base, exp, mod);
 }
 
 // ========== PKCS#1 v1.5 Padding ==========
-
-static inline int pkcs1_pad(const uint8_t *block, size_t blocklen, uint8_t *padded, size_t mod_bytes) ATTR_NODISCARD ATTR_HOT;
-static inline int pkcs1_pad(const uint8_t *block, size_t blocklen, uint8_t *padded, size_t mod_bytes)
+__attr_nodiscard __attr_hot static inline int pkcs1_pad(const uint8_t *block, size_t blocklen, uint8_t *padded, size_t mod_bytes)
 {
     if (blocklen > mod_bytes - 11)
     {
@@ -426,8 +403,7 @@ static inline int pkcs1_pad(const uint8_t *block, size_t blocklen, uint8_t *padd
     return 1;
 }
 
-static inline int pkcs1_unpad(const uint8_t *padded, size_t paddedlen, uint8_t *out, size_t *outlen) ATTR_NODISCARD ATTR_HOT;
-static inline int pkcs1_unpad(const uint8_t *padded, size_t paddedlen, uint8_t *out, size_t *outlen)
+__attr_nodiscard __attr_hot static inline int pkcs1_unpad(const uint8_t *padded, size_t paddedlen, uint8_t *out, size_t *outlen)
 {
     if (paddedlen < 11 || padded[0] != 0x00 || padded[1] != 0x02)
     {
@@ -449,9 +425,7 @@ static inline int pkcs1_unpad(const uint8_t *padded, size_t paddedlen, uint8_t *
 }
 
 // ========== KEY INIT/CLEAR ==========
-
-static inline void rsa_public_key_init(RSAPublicKey *key) ATTR_HOT;
-static inline void rsa_public_key_init(RSAPublicKey *key)
+__attr_hot static inline void rsa_public_key_init(RSAPublicKey *key)
 {
     if (!key)
     {
@@ -461,8 +435,7 @@ static inline void rsa_public_key_init(RSAPublicKey *key)
     mpz_init(key->n);
     mpz_init(key->e);
 }
-static inline void rsa_private_key_init(RSAPrivateKey *key) ATTR_HOT;
-static inline void rsa_private_key_init(RSAPrivateKey *key)
+__attr_hot static inline void rsa_private_key_init(RSAPrivateKey *key)
 {
     if (!key)
     {
@@ -478,16 +451,14 @@ static inline void rsa_private_key_init(RSAPrivateKey *key)
     mpz_init(key->dQ);
     mpz_init(key->qInv);
 }
-static inline void rsa_public_key_clear(RSAPublicKey *key) ATTR_COLD;
-static inline void rsa_public_key_clear(RSAPublicKey *key)
+__attr_cold static inline void rsa_public_key_clear(RSAPublicKey *key)
 {
     if (!key)
         return;
     mpz_clear(key->n);
     mpz_clear(key->e);
 }
-static inline void rsa_private_key_clear(RSAPrivateKey *key) ATTR_COLD;
-static inline void rsa_private_key_clear(RSAPrivateKey *key)
+__attr_cold static inline void rsa_private_key_clear(RSAPrivateKey *key)
 {
     if (!key)
         return;
@@ -502,9 +473,7 @@ static inline void rsa_private_key_clear(RSAPrivateKey *key)
 }
 
 // ========== KEY GENERATION ==========
-
-static inline void rsa_generate_keypair(RSAKeyPair *kp, KeySize bits) ATTR_HOT;
-static inline void rsa_generate_keypair(RSAKeyPair *kp, KeySize bits)
+__attr_hot static inline void rsa_generate_keypair(RSAKeyPair *kp, KeySize bits)
 {
     if (!kp)
     {
@@ -550,9 +519,7 @@ static inline void rsa_generate_keypair(RSAKeyPair *kp, KeySize bits)
 }
 
 // ========== ENCRYPTION/DECRYPTION ==========
-
-static inline int rsa_encrypt(const uint8_t *message, size_t mlen, const RSAPublicKey *pub, uint8_t *out, size_t *outlen) ATTR_NODISCARD ATTR_HOT;
-static inline int rsa_encrypt(const uint8_t *message, size_t mlen, const RSAPublicKey *pub, uint8_t *out, size_t *outlen)
+__attr_nodiscard __attr_hot static inline int rsa_encrypt(const uint8_t *message, size_t mlen, const RSAPublicKey *pub, uint8_t *out, size_t *outlen)
 {
     if (!message || !pub || !out || !outlen)
     {
@@ -588,8 +555,7 @@ static inline int rsa_encrypt(const uint8_t *message, size_t mlen, const RSAPubl
     return 1;
 }
 
-static inline int rsa_decrypt(const uint8_t *enc, size_t enclen, const RSAPrivateKey *priv, uint8_t *out, size_t *outlen) ATTR_NODISCARD ATTR_HOT;
-static inline int rsa_decrypt(const uint8_t *enc, size_t enclen, const RSAPrivateKey *priv, uint8_t *out, size_t *outlen)
+__attr_nodiscard __attr_hot static inline int rsa_decrypt(const uint8_t *enc, size_t enclen, const RSAPrivateKey *priv, uint8_t *out, size_t *outlen)
 {
     if (!enc || !priv || !out || !outlen)
     {
@@ -619,9 +585,7 @@ static inline int rsa_decrypt(const uint8_t *enc, size_t enclen, const RSAPrivat
 }
 
 // ========== PEM/DER SERIALIZATION (PUBLIC KEY) ==========
-
-static inline char *rsa_public_key_to_pem(const RSAPublicKey *pub) ATTR_MALLOC ATTR_NODISCARD ATTR_HOT;
-static inline char *rsa_public_key_to_pem(const RSAPublicKey *pub)
+__attr_malloc __attr_nodiscard __attr_hot static inline char *rsa_public_key_to_pem(const RSAPublicKey *pub)
 {
     if (!pub)
     {
@@ -642,8 +606,7 @@ static inline char *rsa_public_key_to_pem(const RSAPublicKey *pub)
     return pem;
 }
 
-static inline char *rsa_private_key_to_pem(const RSAPrivateKey *priv) ATTR_MALLOC ATTR_NODISCARD ATTR_HOT;
-static inline char *rsa_private_key_to_pem(const RSAPrivateKey *priv)
+__attr_malloc __attr_nodiscard __attr_hot static inline char *rsa_private_key_to_pem(const RSAPrivateKey *priv)
 {
     if (!priv)
     {
@@ -675,9 +638,7 @@ static inline char *rsa_private_key_to_pem(const RSAPrivateKey *priv)
 }
 
 // ========== FILE SAVE/LOAD PEM ==========
-
-static inline int rsa_public_key_save_pem(const char *filename, const RSAPublicKey *pub) ATTR_NODISCARD ATTR_HOT;
-static inline int rsa_public_key_save_pem(const char *filename, const RSAPublicKey *pub)
+__attr_nodiscard __attr_hot static inline int rsa_public_key_save_pem(const char *filename, const RSAPublicKey *pub)
 {
     char *pem = rsa_public_key_to_pem(pub);
     if (!pem)
@@ -687,8 +648,7 @@ static inline int rsa_public_key_save_pem(const char *filename, const RSAPublicK
     return r;
 }
 
-static inline int rsa_private_key_save_pem(const char *filename, const RSAPrivateKey *priv) ATTR_NODISCARD ATTR_HOT;
-static inline int rsa_private_key_save_pem(const char *filename, const RSAPrivateKey *priv)
+__attr_nodiscard __attr_hot static inline int rsa_private_key_save_pem(const char *filename, const RSAPrivateKey *priv)
 {
     char *pem = rsa_private_key_to_pem(priv);
     if (!pem)
