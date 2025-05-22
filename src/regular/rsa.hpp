@@ -122,60 +122,6 @@ inline std::string strip_pem(const std::string& pem) {
 }
 } // namespace PEM_DER
 
-// ===== X.509 SubjectPublicKeyInfo helpers =====
-namespace X509 {
-inline std::vector<uint8_t> oid_rsaEncryption() { return {0x06,0x09,0x2A,0x86,0x48,0x86,0xF7,0x0D,0x01,0x01,0x01}; }
-inline std::vector<uint8_t> encode_null() { return {0x05, 0x00}; }
-inline std::vector<uint8_t> encode_algorithm_identifier() {
-    auto oid = oid_rsaEncryption();
-    auto nul = encode_null();
-    std::vector<std::vector<uint8_t>> fields = {oid, nul};
-    return PEM_DER::encode_sequence(fields);
-}
-inline std::vector<uint8_t> encode_bitstring(const std::vector<uint8_t> &bytes) {
-    std::vector<uint8_t> out = {0x03};
-    size_t len = bytes.size()+1;
-    if (len < 128) out.push_back(uint8_t(len));
-    else {
-        std::vector<uint8_t> lenvec;
-        size_t l = len;
-        while (l) { lenvec.insert(lenvec.begin(), l & 0xFF); l >>= 8; }
-        out.push_back(0x80 | lenvec.size());
-        out.insert(out.end(), lenvec.begin(), lenvec.end());
-    }
-    out.push_back(0x00); // unused bits
-    out.insert(out.end(), bytes.begin(), bytes.end());
-    return out;
-}
-inline std::vector<uint8_t> encode_subjectpublickeyinfo(const std::vector<uint8_t>& pkcs1_pub_der) {
-    std::vector<std::vector<uint8_t>> fields = {
-        encode_algorithm_identifier(),
-        encode_bitstring(pkcs1_pub_der)
-    };
-    return PEM_DER::encode_sequence(fields);
-}
-inline std::vector<uint8_t> decode_subjectpublickeyinfo(const std::vector<uint8_t>& der) {
-    size_t idx = 0, seq_end = 0;
-    PEM_DER::decode_sequence(der, idx, seq_end);
-    PEM_DER::decode_sequence(der, idx, seq_end); // AlgorithmIdentifier
-    if (der[idx++] != 0x06) throw std::runtime_error("Expected OID in AlgorithmIdentifier");
-    uint8_t oid_len = der[idx++];
-    if (oid_len != 9 || !std::equal(der.begin()+idx, der.begin()+idx+oid_len, oid_rsaEncryption().begin()+2))
-        throw std::runtime_error("Expected rsaEncryption OID");
-    idx += oid_len;
-    if (der[idx++] != 0x05 || der[idx++] != 0x00) throw std::runtime_error("Expected NULL in AlgorithmIdentifier");
-    if (der[idx++] != 0x03) throw std::runtime_error("Expected BIT STRING for public key");
-    size_t len = der[idx++];
-    if (len & 0x80) {
-        size_t n = len & 0x7F; len = 0;
-        for (size_t i=0; i<n; ++i) len = (len<<8) | der[idx++];
-    }
-    if (der[idx++] != 0x00) throw std::runtime_error("Expected 0 unused bits in BIT STRING");
-    std::vector<uint8_t> pkcs1_der(der.begin()+idx, der.begin()+idx+len-1);
-    return pkcs1_der;
-}
-} // namespace X509
-
 // ================= RSA Core =====================
 namespace RSA {
 
@@ -218,17 +164,51 @@ public:
         std::ostringstream ss; ss << f.rdbuf();
         return from_pem(ss.str());
     }
-
-    // ===== X.509 additions for public key support =====
+    // --- X.509 SubjectPublicKeyInfo PEM ---
     std::vector<uint8_t> to_x509_der() const {
-        return X509::encode_subjectpublickeyinfo(to_der());
+        // ASN.1: SEQUENCE { algorithm, BIT STRING (SEQUENCE {n,e}) }
+        std::vector<uint8_t> alg = {
+            0x30, 0x0d,
+            0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x01,
+            0x05, 0x00
+        };
+        auto pkseq = to_der();
+        // BIT STRING encode
+        std::vector<uint8_t> bitstr = {0x03};
+        size_t pklen = pkseq.size() + 1;
+        if (pklen < 128) bitstr.push_back(uint8_t(pklen));
+        else {
+            std::vector<uint8_t> lenvec;
+            size_t l = pklen;
+            while (l) { lenvec.insert(lenvec.begin(), l & 0xFF); l >>= 8; }
+            bitstr.push_back(0x80 | lenvec.size());
+            bitstr.insert(bitstr.end(), lenvec.begin(), lenvec.end());
+        }
+        bitstr.push_back(0x00); // 0 unused bits
+        bitstr.insert(bitstr.end(), pkseq.begin(), pkseq.end());
+        std::vector<std::vector<uint8_t>> fields = { alg, bitstr };
+        return PEM_DER::encode_sequence(fields);
     }
     std::string to_x509_pem() const {
         return PEM_DER::pem_wrap(PEM_DER::base64_encode(to_x509_der()), "PUBLIC KEY");
     }
     static RSAPublicKey from_x509_der(const std::vector<uint8_t>& der) {
-        auto pkcs1_der = X509::decode_subjectpublickeyinfo(der);
-        return from_der(pkcs1_der);
+        size_t idx = 0, seq_end = 0;
+        PEM_DER::decode_sequence(der, idx, seq_end);
+        // skip AlgorithmIdentifier
+        PEM_DER::decode_sequence(der, idx, seq_end);
+        idx = seq_end;
+        // BIT STRING
+        if (der[idx++] != 0x03) throw std::runtime_error("ASN.1: expected BIT STRING");
+        size_t len = der[idx++];
+        if (len & 0x80) {
+            size_t n = len & 0x7F; len = 0;
+            for (size_t i=0; i<n; ++i) len = (len<<8) | der[idx++];
+        }
+        if (der[idx++] != 0x00) throw std::runtime_error("ASN.1: expected 0 unused bits");
+        // Now the SEQUENCE {n,e}
+        std::vector<uint8_t> pkseq(der.begin()+idx, der.begin()+idx+len-1);
+        return from_der(pkseq);
     }
     static RSAPublicKey from_x509_pem(const std::string& pem) {
         auto der = PEM_DER::base64_decode(PEM_DER::strip_pem(pem));
@@ -296,6 +276,70 @@ public:
         if (!f) throw std::runtime_error("Cannot open private PEM: " + filename);
         std::ostringstream ss; ss << f.rdbuf();
         return from_pem(ss.str());
+    }
+
+    // === PKCS#8 Private Key (X.509) Support ===
+    std::vector<uint8_t> to_pkcs8_der() const {
+        // AlgorithmIdentifier for rsaEncryption OID 1.2.840.113549.1.1.1, NULL params
+        std::vector<uint8_t> alg = {
+            0x30, 0x0d,
+            0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x01,
+            0x05, 0x00
+        };
+        std::vector<uint8_t> pkcs1 = to_der();
+        // OCTET STRING wrapping PKCS#1 DER
+        std::vector<uint8_t> octet = {0x04};
+        if (pkcs1.size() < 128)
+            octet.push_back(uint8_t(pkcs1.size()));
+        else {
+            std::vector<uint8_t> lenvec;
+            size_t l = pkcs1.size();
+            while (l) { lenvec.insert(lenvec.begin(), l & 0xFF); l >>= 8; }
+            octet.push_back(0x80 | lenvec.size());
+            octet.insert(octet.end(), lenvec.begin(), lenvec.end());
+        }
+        octet.insert(octet.end(), pkcs1.begin(), pkcs1.end());
+        std::vector<std::vector<uint8_t>> fields = {
+            PEM_DER::encode_integer(0), // Version
+            alg,
+            octet
+        };
+        return PEM_DER::encode_sequence(fields);
+    }
+    std::string to_pkcs8_pem() const {
+        return PEM_DER::pem_wrap(PEM_DER::base64_encode(to_pkcs8_der()), "PRIVATE KEY");
+    }
+    static RSAPrivateKey from_pkcs8_der(const std::vector<uint8_t>& der) {
+        size_t idx = 0, seq_end = 0;
+        PEM_DER::decode_sequence(der, idx, seq_end);
+        (void)PEM_DER::decode_integer(der, idx); // Version
+        // AlgorithmIdentifier
+        PEM_DER::decode_sequence(der, idx, seq_end);
+        if (der[idx++] != 0x06) throw std::runtime_error("Expected OID in AlgorithmIdentifier");
+        uint8_t oid_len = der[idx++];
+        idx += oid_len;
+        if (der[idx++] != 0x05 || der[idx++] != 0x00) throw std::runtime_error("Expected NULL in AlgorithmIdentifier");
+        if (der[idx++] != 0x04) throw std::runtime_error("Expected OCTET STRING for private key");
+        size_t len = der[idx++];
+        if (len & 0x80) {
+            size_t n = len & 0x7F; len = 0;
+            for (size_t i=0; i<n; ++i) len = (len<<8) | der[idx++];
+        }
+        std::vector<uint8_t> pkcs1_der(der.begin()+idx, der.begin()+idx+len);
+        return from_der(pkcs1_der);
+    }
+    static RSAPrivateKey from_pkcs8_pem(const std::string& pem) {
+        auto der = PEM_DER::base64_decode(PEM_DER::strip_pem(pem));
+        return from_pkcs8_der(der);
+    }
+    void save_pkcs8_pem(const std::string& filename) const {
+        std::ofstream(filename) << to_pkcs8_pem();
+    }
+    static RSAPrivateKey load_pkcs8_pem(const std::string& filename) {
+        std::ifstream f(filename);
+        if (!f) throw std::runtime_error("Cannot open PKCS#8 PEM: " + filename);
+        std::ostringstream ss; ss << f.rdbuf();
+        return from_pkcs8_pem(ss.str());
     }
 };
 
@@ -374,6 +418,7 @@ inline std::vector<uint8_t> hex_to_bytes(const std::string& hex) {
 }
 } // namespace UTIL
 
+// ----- Key Generation -----
 inline KeyPair GenerateKeyPair(KeySize bits = KeySize::Bits2048) {
     int num_bits = static_cast<int>(bits);
     if (num_bits < 512) throw std::runtime_error("Key size too small.");
@@ -394,6 +439,7 @@ inline KeyPair GenerateKeyPair(KeySize bits = KeySize::Bits2048) {
     return {pub, priv};
 }
 
+// ----- Encryption/Decryption primitives -----
 namespace INTERNAL {
 inline std::vector<mpz_class> encrypt_blocks(const std::vector<uint8_t>& data, const RSAPublicKey& pub) {
     if (pub.n == 0 || pub.e == 0) throw std::runtime_error("Public key is not initialized.");
@@ -447,12 +493,14 @@ inline std::string encode_by_format(const std::vector<uint8_t>& in, OutputFormat
 }
 } // namespace INTERNAL
 
+// ======= Chaining Result Wrappers =======
 class EncryptedResult {
     std::vector<uint8_t> raw;
     OutputFormat format;
 public:
     EncryptedResult(std::vector<uint8_t> rawData)
         : raw(std::move(rawData)), format(OutputFormat::Binary) {}
+
     EncryptedResult& toFormat(OutputFormat fmt) {
         format = fmt;
         return *this;
@@ -479,6 +527,7 @@ class DecryptedResult {
 public:
     DecryptedResult(std::vector<uint8_t> rawData)
         : raw(std::move(rawData)) {}
+
     std::string toString() const {
         return std::string(raw.begin(), raw.end());
     }
@@ -487,6 +536,7 @@ public:
     }
 };
 
+// ======= MESSAGE API =======
 namespace MESSAGE {
 inline EncryptedResult Encrypt(const std::string& message, const RSAPublicKey& pub) {
     if (message.empty()) throw std::runtime_error("Message is empty.");
@@ -511,6 +561,7 @@ inline std::string Decrypt(const std::string& encoded, const RSAPrivateKey& priv
 }
 } // namespace MESSAGE
 
+// ======= FILE API =======
 namespace FILE {
 inline void Encrypt(const std::string& inputFile, const std::string& outputFile,
              const RSAPublicKey& pub, OutputFormat fmt) {
