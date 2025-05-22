@@ -3,7 +3,7 @@
 #define RSA_ALGORITHM_C_H
 
 #include <ctype.h>
-#include <errno.h> 
+#include <errno.h>
 #include <gmp.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -44,7 +44,6 @@
 #endif
 
 // ========== Secure Randomness ==========
-// Fill `buf` with `len` cryptographically secure random bytes using /dev/urandom
 __attr_hot static inline void get_secure_random_bytes(void *buf, size_t len) {
     int fd = open("/dev/urandom", O_RDONLY);
     if (fd < 0) {
@@ -59,7 +58,6 @@ __attr_hot static inline void get_secure_random_bytes(void *buf, size_t len) {
     }
     close(fd);
 }
-// Use cryptographically secure seed for GMP RNG
 __attr_hot static inline void gmp_randseed_secure(gmp_randstate_t rng) {
     unsigned char seed_buf[32];
     get_secure_random_bytes(seed_buf, sizeof(seed_buf));
@@ -147,6 +145,42 @@ __attr_hot static inline void encode_integer(const mpz_t x, uint8_t ** const out
     (*out)[1] = (uint8_t)count;
     memcpy(*out + 2, bytes, count);
     SECURE_FREE(bytes, count + 1);
+}
+
+__attr_hot static inline void encode_octet_string(const uint8_t *data, size_t dlen, uint8_t ** const out, size_t * const outlen) __noexcept
+{
+    *outlen = 2 + dlen;
+    *out = (uint8_t *)SAFE_MALLOC(*outlen);
+    (*out)[0] = 0x04;
+    (*out)[1] = (uint8_t)dlen;
+    memcpy(*out + 2, data, dlen);
+}
+
+__attr_hot static inline void encode_null(uint8_t ** const out, size_t * const outlen) __noexcept
+{
+    *outlen = 2;
+    *out = (uint8_t *)SAFE_MALLOC(*outlen);
+    (*out)[0] = 0x05;
+    (*out)[1] = 0x00;
+}
+
+__attr_hot static inline void encode_oid(const uint8_t *oid, size_t oidlen, uint8_t ** const out, size_t * const outlen) __noexcept
+{
+    *outlen = 2 + oidlen;
+    *out = (uint8_t *)SAFE_MALLOC(*outlen);
+    (*out)[0] = 0x06;
+    (*out)[1] = (uint8_t)oidlen;
+    memcpy(*out + 2, oid, oidlen);
+}
+
+__attr_hot static inline void encode_bit_string(const uint8_t *data, size_t dlen, uint8_t ** const out, size_t * const outlen) __noexcept
+{
+    *outlen = 3 + dlen;
+    *out = (uint8_t *)SAFE_MALLOC(*outlen);
+    (*out)[0] = 0x03;
+    (*out)[1] = (uint8_t)(dlen + 1);
+    (*out)[2] = 0x00;
+    memcpy(*out + 3, data, dlen);
 }
 
 __attr_hot static inline void encode_sequence(uint8_t ** const fields, const size_t * const field_lens, const size_t num_fields, uint8_t ** const out, size_t * const outlen) __noexcept
@@ -445,7 +479,6 @@ __attr_nodiscard __attr_hot static inline int pkcs1_pad(const uint8_t * __restri
     size_t pad_len = mod_bytes - 3 - blocklen;
     uint8_t *pad_bytes = (uint8_t *)SAFE_MALLOC(pad_len);
     get_secure_random_bytes(pad_bytes, pad_len);
-    // Ensure all padding bytes are nonzero
     for (size_t i = 0; i < pad_len; ++i) {
         while (pad_bytes[i] == 0) {
             get_secure_random_bytes(&pad_bytes[i], 1);
@@ -537,7 +570,7 @@ __attr_hot static inline void rsa_generate_keypair(RSAKeyPair * const kp, const 
     }
     gmp_randstate_t rng;
     gmp_randinit_mt(rng);
-    gmp_randseed_secure(rng); // Secure GMP RNG seed!
+    gmp_randseed_secure(rng);
     mpz_t p, q, phi, d, e, dP, dQ, qInv;
     mpz_inits(p, q, phi, d, e, dP, dQ, qInv, NULL);
     random_prime(p, bits / 2, rng);
@@ -582,7 +615,7 @@ __attr_nodiscard __attr_hot static inline int rsa_encrypt(const uint8_t * __rest
         return 0;
     }
     const size_t mod_bytes = (mpz_sizeinbase(pub->n, 2) + 7) / 8;
-    if (!out) { *outlen = mod_bytes; return 1; } // Query mode
+    if (!out) { *outlen = mod_bytes; return 1; }
     uint8_t * const block = (uint8_t *)SAFE_MALLOC(mod_bytes);
     if (unlikely(!pkcs1_pad(message, mlen, block, mod_bytes)))
     {
@@ -640,7 +673,7 @@ __attr_nodiscard __attr_hot static inline int rsa_decrypt(const uint8_t * __rest
     return res;
 }
 
-// ========== PEM/DER SERIALIZATION (PUBLIC KEY) ==========
+// ========== PEM/DER SERIALIZATION (PUBLIC KEY, PRIVATE KEY, X.509, PKCS#8) ==========
 __attr_malloc __attr_nodiscard __attr_hot static inline char *rsa_public_key_to_pem(const RSAPublicKey * const pub) __noexcept
 {
     if (unlikely(!pub))
@@ -673,7 +706,7 @@ __attr_malloc __attr_nodiscard __attr_hot static inline char *rsa_private_key_to
     size_t lens[9], len_seq;
     mpz_t zero;
     mpz_init_set_ui(zero, 0);
-    encode_integer(zero, &en_vals[0], &lens[0]); // version
+    encode_integer(zero, &en_vals[0], &lens[0]);
     encode_integer(priv->n, &en_vals[1], &lens[1]);
     encode_integer(priv->e, &en_vals[2], &lens[2]);
     encode_integer(priv->d, &en_vals[3], &lens[3]);
@@ -690,6 +723,108 @@ __attr_malloc __attr_nodiscard __attr_hot static inline char *rsa_private_key_to
     SECURE_FREE(seq, len_seq);
     SECURE_FREE(b64, strlen(b64));
     mpz_clear(zero);
+    return pem;
+}
+
+// --- X.509 SubjectPublicKeyInfo PEM ("-----BEGIN PUBLIC KEY-----") ---
+__attr_malloc __attr_nodiscard __attr_hot static inline char *rsa_public_key_to_x509_pem(const RSAPublicKey * const pub) __noexcept
+{
+    if (unlikely(!pub))
+    {
+        fprintf(stderr, "Null RSAPublicKey pointer passed to X.509 serialization\n");
+        return NULL;
+    }
+    static const uint8_t oid_rsaEncryption[] = {0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x01};
+    uint8_t *oid, *nullv, *algseq;
+    size_t l_oid, l_nullv, l_algseq;
+    encode_oid(oid_rsaEncryption, sizeof(oid_rsaEncryption), &oid, &l_oid);
+    encode_null(&nullv, &l_nullv);
+    encode_sequence((uint8_t *[]){oid, nullv}, (size_t[]){l_oid, l_nullv}, 2, &algseq, &l_algseq);
+    SECURE_FREE(oid, l_oid);
+    SECURE_FREE(nullv, l_nullv);
+
+    uint8_t *en_n, *en_e, *pkseq;
+    size_t len_n, len_e, len_pkseq;
+    encode_integer(pub->n, &en_n, &len_n);
+    encode_integer(pub->e, &en_e, &len_e);
+    encode_sequence((uint8_t *[]){en_n, en_e}, (size_t[]){len_n, len_e}, 2, &pkseq, &len_pkseq);
+
+    uint8_t *bitstr;
+    size_t l_bitstr;
+    encode_bit_string(pkseq, len_pkseq, &bitstr, &l_bitstr);
+
+    uint8_t *spki;
+    size_t l_spki;
+    encode_sequence((uint8_t *[]){algseq, bitstr}, (size_t[]){l_algseq, l_bitstr}, 2, &spki, &l_spki);
+
+    char *b64 = base64_encode(spki, l_spki);
+    char *pem = pem_wrap(b64, "PUBLIC KEY");
+
+    SECURE_FREE(algseq, l_algseq);
+    SECURE_FREE(en_n, len_n);
+    SECURE_FREE(en_e, len_e);
+    SECURE_FREE(pkseq, len_pkseq);
+    SECURE_FREE(bitstr, l_bitstr);
+    SECURE_FREE(spki, l_spki);
+    SECURE_FREE(b64, strlen(b64));
+    return pem;
+}
+
+// --- PKCS#8 PrivateKeyInfo PEM ("-----BEGIN PRIVATE KEY-----") ---
+__attr_malloc __attr_nodiscard __attr_hot static inline char *rsa_private_key_to_pkcs8_pem(const RSAPrivateKey * const priv) __noexcept
+{
+    if (unlikely(!priv))
+    {
+        fprintf(stderr, "Null RSAPrivateKey pointer passed to PKCS#8 serialization\n");
+        return NULL;
+    }
+    static const uint8_t oid_rsaEncryption[] = {0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x01};
+    uint8_t *oid, *nullv, *algseq;
+    size_t l_oid, l_nullv, l_algseq;
+    encode_oid(oid_rsaEncryption, sizeof(oid_rsaEncryption), &oid, &l_oid);
+    encode_null(&nullv, &l_nullv);
+    encode_sequence((uint8_t *[]){oid, nullv}, (size_t[]){l_oid, l_nullv}, 2, &algseq, &l_algseq);
+    SECURE_FREE(oid, l_oid);
+    SECURE_FREE(nullv, l_nullv);
+
+    uint8_t *en_vals[9], *seq;
+    size_t lens[9], len_seq;
+    mpz_t zero;
+    mpz_init_set_ui(zero, 0);
+    encode_integer(zero, &en_vals[0], &lens[0]);
+    encode_integer(priv->n, &en_vals[1], &lens[1]);
+    encode_integer(priv->e, &en_vals[2], &lens[2]);
+    encode_integer(priv->d, &en_vals[3], &lens[3]);
+    encode_integer(priv->p, &en_vals[4], &lens[4]);
+    encode_integer(priv->q, &en_vals[5], &lens[5]);
+    encode_integer(priv->dP, &en_vals[6], &lens[6]);
+    encode_integer(priv->dQ, &en_vals[7], &lens[7]);
+    encode_integer(priv->qInv, &en_vals[8], &lens[8]);
+    encode_sequence(en_vals, lens, 9, &seq, &len_seq);
+
+    uint8_t *octet;
+    size_t l_octet;
+    encode_octet_string(seq, len_seq, &octet, &l_octet);
+
+    uint8_t *ver;
+    size_t l_ver;
+    encode_integer(zero, &ver, &l_ver);
+    uint8_t *pkcs8;
+    size_t l_pkcs8;
+    encode_sequence((uint8_t *[]){ver, algseq, octet}, (size_t[]){l_ver, l_algseq, l_octet}, 3, &pkcs8, &l_pkcs8);
+    mpz_clear(zero);
+
+    char *b64 = base64_encode(pkcs8, l_pkcs8);
+    char *pem = pem_wrap(b64, "PRIVATE KEY");
+
+    for (int i = 0; i < 9; ++i)
+        SECURE_FREE(en_vals[i], lens[i]);
+    SECURE_FREE(seq, len_seq);
+    SECURE_FREE(ver, l_ver);
+    SECURE_FREE(algseq, l_algseq);
+    SECURE_FREE(octet, l_octet);
+    SECURE_FREE(pkcs8, l_pkcs8);
+    SECURE_FREE(b64, strlen(b64));
     return pem;
 }
 
@@ -798,7 +933,7 @@ __attr_hot static inline int rsa_private_key_load_pem(const char *filename, RSAP
     mpz_t version; mpz_init(version);
     int ok = 0;
     if (der_expect_sequence(der, derlen, &off, &seqlen) &&
-        der_read_integer(der, derlen, &off, version) && // version
+        der_read_integer(der, derlen, &off, version) &&
         der_read_integer(der, derlen, &off, priv->n) &&
         der_read_integer(der, derlen, &off, priv->e) &&
         der_read_integer(der, derlen, &off, priv->d) &&
@@ -810,6 +945,85 @@ __attr_hot static inline int rsa_private_key_load_pem(const char *filename, RSAP
         ok = 1;
     mpz_clear(version);
 
+    SECURE_FREE(der, derlen);
+    if (!ok) rsa_private_key_clear(priv);
+    return ok;
+}
+
+// ========== LOADERS (X.509 / PKCS#8 PEM) ==========
+__attr_hot static inline int rsa_public_key_load_x509_pem(const char *filename, RSAPublicKey *pub)
+{
+    size_t pemlen = 0;
+    char *pem = (char*)read_file(filename, &pemlen);
+    if (!pem) return 0;
+    char *b64 = strip_pem(pem);
+    SECURE_FREE(pem, pemlen);
+    if (!b64) return 0;
+    size_t derlen = 0;
+    uint8_t *der = base64_decode(b64, &derlen);
+    SECURE_FREE(b64, strlen(b64));
+    if (!der) return 0;
+
+    size_t off = 0, seqlen = 0;
+    if (!der_expect_sequence(der, derlen, &off, &seqlen)) { SECURE_FREE(der, derlen); return 0; }
+    uint8_t tag = 0; size_t tlen = 0;
+    if (!der_read_tag_len(der, derlen, &off, &tag, &tlen)) { SECURE_FREE(der, derlen); return 0; }
+    off += tlen;
+    if (!der_read_tag_len(der, derlen, &off, &tag, &tlen) || tag != 0x03) { SECURE_FREE(der, derlen); return 0; }
+    off += 1;
+    if (!der_expect_sequence(der, derlen, &off, &seqlen)) { SECURE_FREE(der, derlen); return 0; }
+    rsa_public_key_init(pub);
+    int ok = 0;
+    if (der_read_integer(der, derlen, &off, pub->n) &&
+        der_read_integer(der, derlen, &off, pub->e))
+        ok = 1;
+    SECURE_FREE(der, derlen);
+    if (!ok) rsa_public_key_clear(pub);
+    return ok;
+}
+
+__attr_hot static inline int rsa_private_key_load_pkcs8_pem(const char *filename, RSAPrivateKey *priv)
+{
+    size_t pemlen = 0;
+    char *pem = (char*)read_file(filename, &pemlen);
+    if (!pem) return 0;
+    char *b64 = strip_pem(pem);
+    SECURE_FREE(pem, pemlen);
+    if (!b64) return 0;
+    size_t derlen = 0;
+    uint8_t *der = base64_decode(b64, &derlen);
+    SECURE_FREE(b64, strlen(b64));
+    if (!der) return 0;
+
+    size_t off = 0, seqlen = 0;
+    if (!der_expect_sequence(der, derlen, &off, &seqlen)) { SECURE_FREE(der, derlen); return 0; }
+    mpz_t version; mpz_init(version);
+    if (!der_read_integer(der, derlen, &off, version)) { mpz_clear(version); SECURE_FREE(der, derlen); return 0; }
+    uint8_t tag = 0; size_t tlen = 0;
+    if (!der_read_tag_len(der, derlen, &off, &tag, &tlen)) { mpz_clear(version); SECURE_FREE(der, derlen); return 0; }
+    off += tlen;
+    if (!der_read_tag_len(der, derlen, &off, &tag, &tlen) || tag != 0x04) { mpz_clear(version); SECURE_FREE(der, derlen); return 0; }
+    size_t inoff = off;
+    off += tlen;
+    rsa_private_key_init(priv);
+    int ok = 0;
+    size_t pkcs1off = inoff, pkcs1len = tlen;
+    size_t seqoff = pkcs1off, seqlen2 = 0;
+    if (der_expect_sequence(der, derlen, &seqoff, &seqlen2)) {
+        mpz_t v2; mpz_init(v2);
+        if (der_read_integer(der, derlen, &seqoff, v2) &&
+            der_read_integer(der, derlen, &seqoff, priv->n) &&
+            der_read_integer(der, derlen, &seqoff, priv->e) &&
+            der_read_integer(der, derlen, &seqoff, priv->d) &&
+            der_read_integer(der, derlen, &seqoff, priv->p) &&
+            der_read_integer(der, derlen, &seqoff, priv->q) &&
+            der_read_integer(der, derlen, &seqoff, priv->dP) &&
+            der_read_integer(der, derlen, &seqoff, priv->dQ) &&
+            der_read_integer(der, derlen, &seqoff, priv->qInv))
+            ok = 1;
+        mpz_clear(v2);
+    }
+    mpz_clear(version);
     SECURE_FREE(der, derlen);
     if (!ok) rsa_private_key_clear(priv);
     return ok;
