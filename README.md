@@ -28,6 +28,7 @@ This project provides a modern, header-only C++ implementation of the RSA crypto
 
 - Key generation (configurable size)
 - PEM/DER encoding for key storage/interop
+- **Supports both PKCS#1 and PKCS#8/X.509 PEM key types for RSA keys**
 - Message and file encryption/decryption with selectable output formats
 - A CLI tool for practical usage
 - Comprehensive test suite
@@ -40,17 +41,17 @@ This project provides a modern, header-only C++ implementation of the RSA crypto
 
 ### Historical Background
 
-RSA stands for Rivest–Shamir–Adleman, named after its inventors Ron Rivest, Adi Shamir, and Leonard Adleman. The algorithm was first publicly described in 1977 by these three MIT researchers. However, unknown to the public at the time, a British mathematician Clifford Cocks had developed a similar system in 1973 while working at GCHQ, but his work was classified until the 1990s.
+RSA stands for Rivest–Shamir–Adleman, named after its inventors Ron Rivest, Adi Shamir, and Leonard Adleman. The algorithm was first publicly described in 1977 by these three MIT researchers. It provided the first practical implementation of public-key cryptography, a concept invented by Whitfield Diffie and Martin Hellman in 1976.
 
-The publication of RSA revolutionized the field of cryptography by introducing the concept of practical public-key cryptography, which underpins much of modern digital security, including secure web browsing, encrypted email, digital signatures, and cryptocurrency.
+The publication of RSA revolutionized the field of cryptography by introducing the concept of practical public-key cryptography, which underpins much of modern digital security, including secure web browsing, digital signatures, and secure email.
 
 ### Why is RSA Important?
 
-Prior to RSA and public-key cryptography, all secure communication required that both parties share a secret key in advance—a major problem for large-scale or spontaneous secure communications. RSA enabled anyone to publish a "public key" that anyone could use to encrypt messages, but only the owner of the corresponding "private key" could decrypt them. This decoupling of encryption and decryption keys is the cornerstone of modern internet security.
+Prior to RSA and public-key cryptography, all secure communication required that both parties share a secret key in advance—a major problem for large-scale or spontaneous secure communications. RSA allows two parties to establish secure communications over an insecure channel without needing to share a secret in advance.
 
 ### The Mathematics of RSA (Obsessive Details)
 
-RSA is based on the mathematical difficulty of factoring the product of two large prime numbers. The security of RSA relies on the fact that, while it is easy to multiply two large primes together to get a composite number, it is extremely difficult to do the reverse (i.e., factor a very large number back into its prime components) with current computing technology.
+RSA is based on the mathematical difficulty of factoring the product of two large prime numbers. The security of RSA relies on the fact that, while it is easy to multiply two large primes together, it is computationally infeasible to factor their product back into the original primes for suitably large numbers.
 
 #### RSA Key Generation Steps
 
@@ -90,7 +91,7 @@ RSA is based on the mathematical difficulty of factoring the product of two larg
 
 #### Why is RSA Secure?
 
-The security of RSA depends on the practical difficulty of factoring the large number `n` back into its prime components `p` and `q`. If an attacker could factor `n`, they could compute `φ(n)` and then derive the private exponent `d`. For sufficiently large key sizes (at least 2048 bits as of 2024), no known algorithms can factor such numbers in a reasonable time frame with classical computers.
+The security of RSA depends on the practical difficulty of factoring the large number `n` back into its prime components `p` and `q`. If an attacker could factor `n`, they could compute `φ(n)` and thus recover the private key `d`. For large enough `n`, this is believed to be infeasible with current technology.
 
 #### Digital Signatures with RSA
 
@@ -130,10 +131,19 @@ This allows verification of both authenticity (only the private key holder could
 ---
 
 ## Directory Structure
+
+- `src/` — Main C++ source code and headers
+- `bin/` — Command-line interface (CLI) implementation
+- `tests/` — Test suite
+- `examples/` — Example programs (if present)
+- `README.md` — Project documentation
+- `LICENSE` — License file
+
 ## Features
 
 - **Key generation:** Choose from 1024, 2048, 3072, or 4096 bits
 - **PEM/DER key serialization:** Compatible with OpenSSL
+- **Supports both PKCS#1 and PKCS#8/X.509 key formats for PEM files**
 - **Multiple output formats:** Binary, hex, and base64
 - **File and message encryption/decryption**
 - **Robust error handling** and user feedback (colored output in CLI)
@@ -176,26 +186,56 @@ g++ -std=c++17 -lgmp -lgmpxx -o rsa_test tests/rsa_test.cpp
 
 ---
 
+Here are updated usage examples using the actual API function names from your rsa.hpp file, covering PEM, PKCS#8, X.509 formats, and encryption/decryption for both messages and files:
+
+---
+
 ## Usage Examples
 
-### 1. Generate and Save Keys to PEM Files
+### 1. Generate and Save Keys (PEM, PKCS#8, X.509)
 
 ```cpp
 #include "rsa.hpp"
 
 int main() {
-    // Generate a 2048-bit key pair (in memory)
+    // Generate a 2048-bit key pair
     RSA::KeyPair keys = RSA::GenerateKeyPair(RSA::KeySize::Bits2048);
 
-    // Save keys to PEM files
+    // Save as PEM (PKCS#1 for private, PKCS#1 for public)
     keys.public_key.save_pem("public.pem");
     keys.private_key.save_pem("private.pem");
+
+    // Save private key as PKCS#8 (X.509 format)
+    keys.private_key.save_pkcs8_pem("private_pkcs8.pem");
+
+    // Save public key as X.509 SubjectPublicKeyInfo
+    keys.public_key.save_x509_pem("public_x509.pem");
 }
 ```
 
 ---
 
-### 2. Encrypt and Decrypt a String Message (Both File and In-Memory Keys)
+### 2. Load Keys in Various Formats
+
+```cpp
+#include "rsa.hpp"
+
+int main() {
+    // Load public key (PKCS#1 PEM)
+    auto pub1 = RSA::RSAPublicKey::load_pem("public.pem");
+    // Load public key (X.509 PEM)
+    auto pub2 = RSA::RSAPublicKey::load_x509_pem("public_x509.pem");
+
+    // Load private key (PKCS#1 PEM)
+    auto priv1 = RSA::RSAPrivateKey::load_pem("private.pem");
+    // Load private key (PKCS#8 PEM)
+    auto priv2 = RSA::RSAPrivateKey::load_pkcs8_pem("private_pkcs8.pem");
+}
+```
+
+---
+
+### 3. Encrypt and Decrypt a String Message
 
 ```cpp
 #include "rsa.hpp"
@@ -204,57 +244,53 @@ int main() {
 int main() {
     std::string message = "Hello, RSA!";
 
-    // --- Option 1: Use keys directly after generation (in-memory) ---
+    // In-memory keys
     RSA::KeyPair keys = RSA::GenerateKeyPair(RSA::KeySize::Bits1024);
 
-    std::string encrypted_inline = RSA::MESSAGE::Encrypt(message, keys.public_key)
-                                      .toFormat(RSA::OutputFormat::Base64)
-                                      .toString();
-    std::string decrypted_inline = RSA::MESSAGE::Decrypt(encrypted_inline, keys.private_key, RSA::OutputFormat::Base64);
+    // Encrypt with public, decrypt with private (in-memory)
+    std::string encrypted = RSA::MESSAGE::Encrypt(message, keys.public_key)
+                                .toFormat(RSA::OutputFormat::Base64)
+                                .toString();
+    std::string decrypted = RSA::MESSAGE::Decrypt(encrypted, keys.private_key, RSA::OutputFormat::Base64);
 
-    std::cout << "[Inline] Decrypted: " << decrypted_inline << std::endl; // Output: Hello, RSA!
+    std::cout << "Decrypted: " << decrypted << std::endl;
 
-    // --- Option 2: Load keys from PEM files ---
-    // (Assuming PEM files exist, e.g., from the previous example)
-    auto pub = RSA::RSAPublicKey::load_pem("public.pem");
-    auto priv = RSA::RSAPrivateKey::load_pem("private.pem");
+    // Using loaded keys (X.509 public, PKCS#8 private)
+    auto pub = RSA::RSAPublicKey::load_x509_pem("public_x509.pem");
+    auto priv = RSA::RSAPrivateKey::load_pkcs8_pem("private_pkcs8.pem");
 
-    std::string encrypted_file = RSA::MESSAGE::Encrypt(message, pub)
-                                     .toFormat(RSA::OutputFormat::Base64)
-                                     .toString();
-    std::string decrypted_file = RSA::MESSAGE::Decrypt(encrypted_file, priv, RSA::OutputFormat::Base64);
+    std::string encrypted2 = RSA::MESSAGE::Encrypt(message, pub)
+                                 .toFormat(RSA::OutputFormat::Base64)
+                                 .toString();
+    std::string decrypted2 = RSA::MESSAGE::Decrypt(encrypted2, priv, RSA::OutputFormat::Base64);
 
-    std::cout << "[PEM file] Decrypted: " << decrypted_file << std::endl; // Output: Hello, RSA!
+    std::cout << "Decrypted (X.509/PKCS#8): " << decrypted2 << std::endl;
 }
 ```
 
 ---
 
-### 3. Encrypt and Decrypt a File (Both File and In-Memory Keys)
+### 4. Encrypt and Decrypt a File (All Key Formats)
 
 ```cpp
 #include "rsa.hpp"
 
 int main() {
-    // --- Option 1: Use keys just generated (in-memory) ---
-    RSA::KeyPair keys = RSA::GenerateKeyPair(RSA::KeySize::Bits1024);
+    // Load keys
+    auto pub = RSA::RSAPublicKey::load_x509_pem("public_x509.pem");
+    auto priv = RSA::RSAPrivateKey::load_pkcs8_pem("private_pkcs8.pem");
 
-    // Encrypt and decrypt using in-memory keys
-    RSA::FILE::Encrypt("plain.txt", "enc.bin", keys.public_key, RSA::OutputFormat::Binary);
-    RSA::FILE::Decrypt("enc.bin", "dec.txt", keys.private_key, RSA::OutputFormat::Binary);
+    // Encrypt file
+    RSA::FILE::Encrypt("plain.txt", "enc.bin", pub, RSA::OutputFormat::Binary);
 
-    // --- Option 2: Use keys loaded from PEM files ---
-    auto pub = RSA::RSAPublicKey::load_pem("public.pem");
-    auto priv = RSA::RSAPrivateKey::load_pem("private.pem");
-
-    RSA::FILE::Encrypt("plain.txt", "enc2.bin", pub, RSA::OutputFormat::Binary);
-    RSA::FILE::Decrypt("enc2.bin", "dec2.txt", priv, RSA::OutputFormat::Binary);
+    // Decrypt file
+    RSA::FILE::Decrypt("enc.bin", "dec.txt", priv, RSA::OutputFormat::Binary);
 }
 ```
 
 ---
 
-### 4. Encrypt to Hex or Base64, Decrypt from Hex or Base64
+### 5. Encrypt to Hex or Base64, Decrypt from Hex or Base64
 
 ```cpp
 #include "rsa.hpp"
@@ -283,18 +319,22 @@ int main() {
 
 ---
 
-### 5. Quick Reference — Loading Keys
+### 6. Quick Reference — Loading Keys (All Formats)
 
 ```cpp
-// To use keys immediately after generation:
+// Generate keys
 RSA::KeyPair keys = RSA::GenerateKeyPair(RSA::KeySize::Bits2048);
-// Use keys.public_key and keys.private_key directly.
 
-// To use keys stored in files:
-auto pub = RSA::RSAPublicKey::load_pem("public.pem");
-auto priv = RSA::RSAPrivateKey::load_pem("private.pem");
-// Use pub and priv as above.
+// Load public key
+auto pub_pem  = RSA::RSAPublicKey::load_pem("public.pem");
+auto pub_x509 = RSA::RSAPublicKey::load_x509_pem("public_x509.pem");
+
+// Load private key
+auto priv_pem   = RSA::RSAPrivateKey::load_pem("private.pem");
+auto priv_pkcs8 = RSA::RSAPrivateKey::load_pkcs8_pem("private_pkcs8.pem");
 ```
+
+---
 
 ---
 
@@ -317,12 +357,12 @@ It handles user prompts, colored output, and supports all core library functiona
 
 ### Flags and Arguments Table
 
-| Command   | Required Flags                                      | Optional Flags & Arguments                                            | Description                                 |
-|-----------|-----------------------------------------------------|-----------------------------------------------------------------------|---------------------------------------------|
-| genkey    | `--pub <pub.pem>`<br>`--priv <priv.pem>`            | `--bits <size>`<br>`--quick`<br>`--force`<br>`--no-color`             | Generate RSA keypair                        |
-| encrypt   | `--pub <pub.pem>`<br>`--in <file\|msg>`<br>`--out <file>` | `--format <binary\|base64\|hex>`<br>`--msg`<br>`--quick`<br>`--force`<br>`--no-color` | Encrypt file or message                     |
-| decrypt   | `--priv <priv.pem>`<br>`--in <file\|msg>`<br>`--out <file>`| `--format <binary\|base64\|hex>`<br>`--msg`<br>`--quick`<br>`--force`<br>`--no-color` | Decrypt file or message                     |
-|           |                                                     | `--help`<br>`--version`                                               | Show help/version info                      |
+| Command   | Required Flags                                      | Optional Flags & Arguments                                                                                                    | Description                                 |
+|-----------|-----------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------|---------------------------------------------|
+| genkey    | `--pub <pub.pem>`<br>`--priv <priv.pem>`            | `--bits <size>`<br>`--pem-type <pkcs1\|x509>`<br>`--quick`<br>`--force`<br>`--no-color`                                      | Generate RSA keypair                        |
+| encrypt   | `--pub <pub.pem>`<br>`--in <file\|msg>`<br>`--out <file>` | `--format <binary\|base64\|hex>`<br>`--pem-type <pkcs1\|x509>`<br>`--msg`<br>`--quick`<br>`--force`<br>`--no-color` | Encrypt file or message          |
+| decrypt   | `--priv <priv.pem>`<br>`--in <file\|msg>`<br>`--out <file>`| `--format <binary\|base64\|hex>`<br>`--pem-type <pkcs1\|x509>`<br>`--msg`<br>`--quick`<br>`--force`<br>`--no-color` | Decrypt file or message         |
+|           |                                                     | `--help`<br>`--version`                                                                                                      | Show help/version info                      |
 
 #### Flag Descriptions
 
@@ -332,6 +372,7 @@ It handles user prompts, colored output, and supports all core library functiona
 - `--out <file>`: Output file
 - `--bits <size>`: Key size (1024, 2048, 3072, 4096; default: 1024)
 - `--format <type>`: Output format (`binary`, `base64`, or `hex`; default: binary)
+- `--pem-type <pkcs1|x509>`: **PEM key encoding type; choose between `pkcs1` (traditional RSA) or `x509` (PKCS#8/X.509). Default: `pkcs1`.**
 - `--msg`: Treat input as a string message instead of a file
 - `--quick`: Suppress confirmation prompts
 - `--force`: Overwrite existing output files without prompting
@@ -341,24 +382,29 @@ It handles user prompts, colored output, and supports all core library functiona
 
 #### CLI Usage Examples
 
-**Generate a key pair:**
+**Generate a key pair (default PKCS#1):**
 ```sh
 ./rsa_cli genkey --pub public.pem --priv private.pem --bits 2048 --quick
 ```
 
-**Encrypt a file as binary:**
+**Generate a key pair with X.509/PKCS#8 encoding:**
 ```sh
-./rsa_cli encrypt --pub public.pem --in myfile.txt --out encrypted.bin --format binary
+./rsa_cli genkey --pub public.pem --priv private.pem --bits 2048 --pem-type x509 --quick
+```
+
+**Encrypt a file as binary using a specific PEM type:**
+```sh
+./rsa_cli encrypt --pub public.pem --in myfile.txt --out encrypted.bin --format binary --pem-type pkcs1
+```
+
+**Decrypt a file with X.509/PKCS#8:**
+```sh
+./rsa_cli decrypt --priv private.pem --in encrypted.bin --out decrypted.txt --format binary --pem-type x509
 ```
 
 **Encrypt a message to base64:**
 ```sh
 ./rsa_cli encrypt --pub public.pem --in "my secret" --out encrypted.b64 --format base64 --msg
-```
-
-**Decrypt a file:**
-```sh
-./rsa_cli decrypt --priv private.pem --in encrypted.bin --out decrypted.txt --format binary
 ```
 
 **Decrypt a base64 message:**
