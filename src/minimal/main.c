@@ -4,62 +4,81 @@
 #include <stdlib.h>
 #include "rsa.h"
 
+// Helper to print status
+#define CHECK(x, msg) do { if (!(x)) { fprintf(stderr, "FAIL: %s\n", msg); exit(1); } } while(0)
+
 int main() {
-    // 1. Generate Keypair
     RSAKeyPair kp;
     rsa_public_key_init(&kp.public_key);
     rsa_private_key_init(&kp.private_key);
 
-    printf("Generating RSA keypair (1024 bits)...\n");
-    rsa_generate_keypair(&kp, KEYSIZE_1024);
+    // Generate RSA keypair (2048 bits)
+    rsa_generate_keypair(&kp, KEYSIZE_2048);
+    printf("Keypair generated.\n");
 
-    // 2. Print and Save Keys as PEM
-    char* pub_pem = rsa_public_key_to_pem(&kp.public_key);
-    char* priv_pem = rsa_private_key_to_pem(&kp.private_key);
+    // Save in different formats
+    CHECK(rsa_public_key_save_pem("pub.pem", &kp.public_key), "Saving public PEM");
+    CHECK(rsa_private_key_save_pem("priv.pem", &kp.private_key), "Saving private PEM");
 
-    printf("\nPublic Key (PEM):\n%s\n", pub_pem);
-    printf("Private Key (PEM):\n%s\n", priv_pem);
+    char *pub_x509 = rsa_public_key_to_x509_pem(&kp.public_key);
+    char *priv_pkcs8 = rsa_private_key_to_pkcs8_pem(&kp.private_key);
+    CHECK(pub_x509 && priv_pkcs8, "Serialization to X.509/PKCS#8");
 
-    const int save_pubpem = rsa_public_key_save_pem("public.pem", &kp.public_key);
-    const int save_privpem = rsa_private_key_save_pem("private.pem", &kp.private_key);
+    CHECK(write_text("pub_x509.pem", pub_x509), "Writing X.509 PEM");
+    CHECK(write_text("priv_pkcs8.pem", priv_pkcs8), "Writing PKCS#8 PEM");
 
-    // 3. Encrypt Message
-    const char* message = "Hello, RSA World!";
-    size_t msglen = strlen(message);
+    free(pub_x509);
+    free(priv_pkcs8);
+
+    // Encrypt a message (in-memory, without loading keys)
+    const char *message = "Hello, RSA!";
     size_t mod_bytes = (mpz_sizeinbase(kp.public_key.n, 2) + 7) / 8;
-    uint8_t* ciphertext = (uint8_t*)malloc(mod_bytes);
-    size_t clen = 0;
-    if (!rsa_encrypt((const uint8_t*)message, msglen, &kp.public_key, ciphertext, &clen)) {
-        fprintf(stderr, "Encryption failed.\n");
-        return 1;
+    uint8_t *encrypted = (uint8_t*)malloc(mod_bytes);
+    size_t encrypted_len = 0;
+
+    CHECK(rsa_encrypt((const uint8_t *)message, strlen(message), &kp.public_key, encrypted, &encrypted_len), "Encrypt message");
+
+    // Decrypt the message
+    uint8_t *decrypted = (uint8_t*)malloc(mod_bytes);
+    size_t decrypted_len = 0;
+    CHECK(rsa_decrypt(encrypted, encrypted_len, &kp.private_key, decrypted, &decrypted_len), "Decrypt message");
+
+    printf("Decrypted message: %.*s\n", (int)decrypted_len, decrypted);
+
+    // Encrypt contents of plain.txt
+    size_t plain_len = 0;
+    uint8_t *plain_data = read_file("plain.txt", &plain_len);
+    CHECK(plain_data, "Read plain.txt");
+
+    // If too large for RSA, truncate or error
+    if (plain_len > mod_bytes - 11) {
+        printf("plain.txt too large for one RSA encryption block, truncating.\n");
+        plain_len = mod_bytes - 11;
     }
-    char* hex_enc = bytes_to_hex(ciphertext, clen);
 
-    printf("\nOriginal message: %s\n", message);
-    printf("Encrypted (hex): %s\n", hex_enc);
+    size_t encrypted_file_len = 0;
+    CHECK(rsa_encrypt(plain_data, plain_len, &kp.public_key, encrypted, &encrypted_file_len), "Encrypt plain.txt");
 
-    // 4. Decrypt Message
-    uint8_t* decrypted = (uint8_t*)malloc(mod_bytes);
-    size_t dlen = 0;
-    if (!rsa_decrypt(ciphertext, clen, &kp.private_key, decrypted, &dlen)) {
-        fprintf(stderr, "Decryption failed.\n");
-        return 1;
-    }
-    char* decrypted_str = (char*)malloc(dlen + 1);
-    memcpy(decrypted_str, decrypted, dlen);
-    decrypted_str[dlen] = '\0';
+    CHECK(write_file("encrypted.bin", encrypted, encrypted_file_len), "Write encrypted.bin");
 
-    printf("Decrypted message: %s\n", decrypted_str);
+    // Decrypt file
+    uint8_t *enc_file_data = read_file("encrypted.bin", &encrypted_file_len);
+    CHECK(enc_file_data, "Read encrypted.bin");
+    uint8_t *decrypted_file = (uint8_t*)malloc(mod_bytes);
+    size_t decrypted_file_len = 0;
+    CHECK(rsa_decrypt(enc_file_data, encrypted_file_len, &kp.private_key, decrypted_file, &decrypted_file_len), "Decrypt encrypted.bin");
+
+    CHECK(write_file("decrypted.txt", decrypted_file, decrypted_file_len), "Write decrypted.txt");
 
     // Cleanup
-    free(ciphertext); 
-    free(hex_enc); 
-    free(decrypted); 
-    free(decrypted_str);
-    free(pub_pem); 
-    free(priv_pem);
+    free(encrypted);
+    free(decrypted);
+    free(plain_data);
+    free(enc_file_data);
+    free(decrypted_file);
     rsa_public_key_clear(&kp.public_key);
     rsa_private_key_clear(&kp.private_key);
 
+    printf("Demo completed successfully.\n");
     return 0;
 }
