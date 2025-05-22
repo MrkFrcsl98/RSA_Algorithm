@@ -4,14 +4,12 @@
 #include <string>
 #include <algorithm>
 
-// Color codes
 std::string COLOR_RED    = "\033[31m";
 std::string COLOR_YELLOW = "\033[33m";
 std::string COLOR_GREEN  = "\033[32m";
 std::string COLOR_CYAN   = "\033[36m";
 std::string COLOR_RESET  = "\033[0m";
 
-// Utilities
 bool file_exists(const std::string& fname) {
     std::ifstream f(fname, std::ios::binary);
     return f.good();
@@ -36,8 +34,15 @@ RSA::OutputFormat parse_format(const std::string& v, bool& ok) {
     ok = false;
     return RSA::OutputFormat::Binary;
 }
+enum class PubKeyPEMType { PKCS1, X509 };
+PubKeyPEMType parse_pem_type(const std::string& v) {
+    if (v == "x509") return PubKeyPEMType::X509;
+    return PubKeyPEMType::PKCS1;
+}
+std::string pem_type_to_str(PubKeyPEMType type) {
+    return (type == PubKeyPEMType::X509) ? "x509" : "pkcs1";
+}
 
-// Prompts
 std::string prompt(const std::string& question, const std::string& defaultValue = "", bool no_color = false) {
     if (!no_color) std::cout << COLOR_YELLOW;
     std::cout << question;
@@ -82,15 +87,16 @@ void print_usage(bool no_color = false) {
     if (!no_color) std::cout << COLOR_CYAN;
     std::cout <<
 R"(Usage:
-  rsa_cli genkey --pub <public.pem> --priv <private.pem> [--bits <key size>] [options]
-  rsa_cli encrypt --pub <public.pem> --in <input file|msg> --out <encrypted.bin> [--format hex|base64|binary] [--msg] [options]
-  rsa_cli decrypt --priv <private.pem> --in <encrypted.bin> --out <decrypted.txt> [--format hex|base64|binary] [--msg] [options]
+  rsa_cli genkey --pub <public.pem> --priv <private.pem> [--bits <key size>] [--pem-type pkcs1|x509] [options]
+  rsa_cli encrypt --pub <public.pem> --in <input file|msg> --out <encrypted.bin> [--pem-type pkcs1|x509] [--format hex|base64|binary] [--msg] [options]
+  rsa_cli decrypt --priv <private.pem> --in <encrypted.bin> --out <decrypted.txt> [--pem-type pkcs1|x509] [--format hex|base64|binary] [--msg] [options]
 Options:
   --pub       Path to RSA public key (PEM) [public.pem]
   --priv      Path to RSA private key (PEM) [private.pem]
   --in        Input file (for --msg, input is a string, not a file)
   --out       Output file (for --msg, output is written as text)
   --bits      Key size: 1024, 2048, 3072, 4096. Default: 1024
+  --pem-type  Public key PEM type: pkcs1 (default) or x509
   --format    Output format: hex, base64, or binary. Default: binary
   --msg       Operate on message string instead of file
   --quick     No confirmation prompts (except errors/missing)
@@ -99,107 +105,25 @@ Options:
   --help      Show this help and exit
   --version   Print version info and continue
 Examples:
-  rsa_cli genkey --pub public.pem --priv private.pem --bits 2048 --quick
-  rsa_cli encrypt --pub public.pem --in my.txt --out encrypted.bin --format binary
-  rsa_cli encrypt --pub public.pem --in "Secret" --out encrypted.bin --format hex --msg
+  rsa_cli genkey --pub public.pem --priv private.pem --bits 2048 --pem-type x509 --quick
+  rsa_cli encrypt --pub public.pem --in my.txt --out encrypted.bin --pem-type x509 --format binary
+  rsa_cli encrypt --pub public.pem --in "Secret" --out encrypted.bin --pem-type pkcs1 --format hex --msg
   rsa_cli decrypt --priv private.pem --in encrypted.bin --out decrypted.txt --format binary
   rsa_cli decrypt --priv private.pem --in "..." --out decrypted.txt --format hex --msg
-)";
-    if (!no_color) std::cout << COLOR_RESET;
-}
-
-void print_verbose_help(bool no_color = false) {
-    if (!no_color) std::cout << COLOR_CYAN;
-    std::cout << R"(
-RSA CLI - Help
------------------------
-This tool allows you to generate RSA key pairs, encrypt files or messages, and decrypt them.
-
-Commands:
-  genkey     Generate a new RSA keypair.
-  encrypt    Encrypt a file or message using a public key.
-  decrypt    Decrypt an encrypted file or message using a private key.
-
-Options:
-  --pub <file>
-      Path to the RSA public key in PEM format.
-      Used for encryption and key generation.
-      Default: public.pem
-
-  --priv <file>
-      Path to the RSA private key in PEM format.
-      Used for decryption and key generation.
-      Default: private.pem
-
-  --in <file|message>
-      File to read input data from. For --msg, this is treated as the message/text.
-      For encryption, this is the plaintext file/message.
-      For decryption, this is the encrypted file/message.
-
-  --out <file>
-      File to write output data to.
-      For encryption, this is the encrypted result file.
-      For decryption, this is the decrypted output file or message.
-
-  --bits <size>
-      RSA key size in bits. Supported values: 1024, 2048, 3072, 4096.
-      Default: 1024
-
-  --format <format>
-      Format for encrypted or decrypted output.
-      Allowed: binary (default), base64, hex
-
-  --msg
-      Treat --in as a text message instead of a file.
-      Use this to encrypt or decrypt short messages directly from the command line.
-
-  --quick
-      Suppresses all confirmation prompts except for errors or missing/invalid arguments.
-      Useful for scripting or automation.
-
-  --force
-      Overwrite output files without prompting, even if they already exist.
-
-  --no-color
-      Disables colored output.
-
-  --help
-      Show this detailed help and exit.
-
-  --version
-      Print the program version at the start of output (does not exit).
-
-Examples:
-  rsa_cli genkey --pub public.pem --priv private.pem --bits 2048 --quick
-      # Generates a 2048-bit keypair with no interactive prompts.
-
-  rsa_cli encrypt --pub public.pem --in my.txt --out encrypted.bin --format binary
-      # Encrypts 'my.txt' using 'public.pem' and writes binary output.
-
-  rsa_cli encrypt --pub public.pem --in "Secret" --out encrypted.bin --format hex --msg
-      # Encrypts the message "Secret" (not a file!) and outputs the result in hex.
-
-  rsa_cli decrypt --priv private.pem --in encrypted.bin --out decrypted.txt --format binary
-      # Decrypts the file 'encrypted.bin' using 'private.pem'.
-
-  rsa_cli decrypt --priv private.pem --in "..." --out decrypted.txt --format hex --msg
-      # Decrypts the hex-encoded message (from --in) using 'private.pem'.
-
 )";
     if (!no_color) std::cout << COLOR_RESET;
 }
 
 int main(int argc, char* argv[]) {
-    std::string version = "1.1.0";
+    std::string version = "1.3.0";
     bool quick = false, force = false, no_color = false;
     bool verbose_help = false, show_version = false;
 
-    // Argument variables
-    std::string pubfile, privfile, infile, outfile, format_str;
+    std::string pubfile, privfile, infile, outfile, format_str, pemtype_str;
     int bits = 0;
     bool msgmode = false;
+    PubKeyPEMType pem_type = PubKeyPEMType::PKCS1;
 
-    // Pre-scan for --version and --help anywhere
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
         if (arg == "--version") show_version = true;
@@ -213,7 +137,7 @@ int main(int argc, char* argv[]) {
         std::cout << "rsa_cli version " << version << std::endl;
     }
     if (verbose_help) {
-        print_verbose_help(no_color);
+        print_usage(no_color);
         return 0;
     }
     if (argc < 2) {
@@ -222,7 +146,6 @@ int main(int argc, char* argv[]) {
     }
     std::string command = argv[1];
 
-    // Parse CLI args (flags and provided values)
     for (int i = 2; i < argc; ++i) {
         std::string arg = argv[i];
         if (arg == "--pub" && i + 1 < argc) pubfile = argv[++i];
@@ -231,6 +154,7 @@ int main(int argc, char* argv[]) {
         else if (arg == "--out" && i + 1 < argc) outfile = argv[++i];
         else if (arg == "--bits" && i + 1 < argc) bits = std::atoi(argv[++i]);
         else if (arg == "--format" && i + 1 < argc) format_str = argv[++i];
+        else if (arg == "--pem-type" && i + 1 < argc) pemtype_str = argv[++i];
         else if (arg == "--msg") msgmode = true;
         else if (arg == "--quick") quick = true;
         else if (arg == "--force") force = true;
@@ -238,8 +162,20 @@ int main(int argc, char* argv[]) {
         else if (arg == "--help" || arg == "--version") {/*already handled*/}
         else { print_warning("Unknown or incomplete argument: " + arg, no_color); }
     }
+    if (!pemtype_str.empty()) pem_type = parse_pem_type(pemtype_str);
 
-    // ====== GENKEY ======
+    // Prompt for pem-type if not supplied
+    auto pem_type_prompt = [&](const std::string& q) {
+        while (pemtype_str.empty()) {
+            std::string v = prompt(q + " (pkcs1/x509)", "pkcs1", no_color);
+            std::transform(v.begin(), v.end(), v.begin(), ::tolower);
+            if (v == "pkcs1" || v == "x509") {
+                pem_type = (v == "x509") ? PubKeyPEMType::X509 : PubKeyPEMType::PKCS1;
+                pemtype_str = v;
+            }
+        }
+    };
+
     if (command == "genkey") {
         while (!is_valid_filename(pubfile)) {
             pubfile = prompt("Enter public key file", "public.pem", no_color);
@@ -252,6 +188,7 @@ int main(int argc, char* argv[]) {
             try { bits = std::stoi(bits_str); }
             catch (...) { print_error("Not a number!", no_color); bits = 0; }
         }
+        pem_type_prompt("Select PEM type for keypair");
         if ((file_exists(pubfile) || file_exists(privfile)) && !force) {
             print_warning("One or both key files already exist.", no_color);
             if (!confirm_prompt("Overwrite?", true, quick, no_color)) { print_warning("Operation cancelled.", no_color); return 0; }
@@ -262,13 +199,19 @@ int main(int argc, char* argv[]) {
                     << "  Public key: " << pubfile << "\n"
                     << "  Private key: " << privfile << "\n"
                     << "  Key size: " << bits << "\n"
+                    << "  PEM type: " << pem_type_to_str(pem_type) << "\n"
                     << COLOR_RESET;
             if (!confirm_prompt("Proceed?", true, quick, no_color)) { print_warning("Operation cancelled.", no_color); return 0; }
         }
         try {
             RSA::KeyPair kp = RSA::GenerateKeyPair(static_cast<RSA::KeySize>(bits));
-            kp.public_key.save_pem(pubfile);
-            kp.private_key.save_pem(privfile);
+            if (pem_type == PubKeyPEMType::X509) {
+                kp.public_key.save_x509_pem(pubfile);
+                kp.private_key.save_pkcs8_pem(privfile);
+            } else {
+                kp.public_key.save_pem(pubfile);
+                kp.private_key.save_pem(privfile);
+            }
             print_success("Keys saved to " + pubfile + " and " + privfile, no_color);
         } catch (const std::exception& ex) {
             print_error("Key generation failed: " + std::string(ex.what()), no_color);
@@ -276,7 +219,6 @@ int main(int argc, char* argv[]) {
         return 0;
     }
 
-    // ===== ENCRYPT/DECRYPT =====
     bool encrypt = (command == "encrypt");
     bool decrypt = (command == "decrypt");
     if (encrypt || decrypt) {
@@ -291,6 +233,7 @@ int main(int argc, char* argv[]) {
                 if (!file_exists(privfile)) print_error("File not found!", no_color);
             }
         }
+        if (encrypt) pem_type_prompt("Select PEM type for public key");
         if (!msgmode) {
             std::string defIn = encrypt ? "to_encrypt.txt" : "encrypted.bin";
             while (!is_valid_filename(infile) || !file_exists(infile)) {
@@ -328,12 +271,15 @@ int main(int argc, char* argv[]) {
                     << "  Input: " << infile << (msgmode ? " (message mode)" : " (file mode)") << "\n"
                     << "  Output: " << outfile << "\n"
                     << "  Format: " << format_str << "\n"
+                    << (encrypt ? ("  PEM type: " + pem_type_to_str(pem_type) + "\n") : "")
                     << COLOR_RESET;
             if (!confirm_prompt("Proceed?", true, quick, no_color)) { print_warning("Operation cancelled.", no_color); return 0; }
         }
         try {
             if (encrypt) {
-                RSA::RSAPublicKey pub = RSA::RSAPublicKey::load_pem(pubfile);
+                RSA::RSAPublicKey pub = (pem_type == PubKeyPEMType::X509)
+                    ? RSA::RSAPublicKey::load_x509_pem(pubfile)
+                    : RSA::RSAPublicKey::load_pem(pubfile);
                 if (msgmode) {
                     std::string message = infile;
                     auto enc = RSA::MESSAGE::Encrypt(message, pub).toFormat(fmt);
@@ -344,7 +290,9 @@ int main(int argc, char* argv[]) {
                 }
                 print_success("Encryption OK. Output: " + outfile, no_color);
             } else if (decrypt) {
-                RSA::RSAPrivateKey priv = RSA::RSAPrivateKey::load_pem(privfile);
+                RSA::RSAPrivateKey priv = (pem_type == PubKeyPEMType::X509)
+                    ? RSA::RSAPrivateKey::load_pkcs8_pem(privfile)
+                    : RSA::RSAPrivateKey::load_pem(privfile);
                 if (msgmode) {
                     std::string encdata = infile;
                     RSA::EncryptedResult encres(
