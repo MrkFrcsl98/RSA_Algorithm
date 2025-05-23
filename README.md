@@ -32,6 +32,7 @@ This project provides a modern, header-only C++ implementation of the RSA crypto
 - Message and file encryption/decryption with selectable output formats
 - A CLI tool for practical usage
 - Comprehensive test suite
+- **Statically linked binaries available for easy distribution and system compatibility**
 
 **Note:** This implementation is for educational purposes only and should NOT be used in production settings.
 
@@ -133,8 +134,8 @@ This allows verification of both authenticity (only the private key holder could
 ## Directory Structure
 
 - `src/` — Main C++ source code and headers
-- `bin/` — Command-line interface (CLI) implementation
-- `tests/` — Test suite
+- `bin/` — Command-line interface (CLI) implementation and **statically linked CLI binary (`rsa_static_cli`)**
+- `tests/` — Test suite and **statically linked test binary (`rsa_static_test`)**
 - `examples/` — Example programs (if present)
 - `README.md` — Project documentation
 - `LICENSE` — License file
@@ -148,6 +149,7 @@ This allows verification of both authenticity (only the private key holder could
 - **File and message encryption/decryption**
 - **Robust error handling** and user feedback (colored output in CLI)
 - **Cross-platform (see OS notes below)**
+- **Statically linked CLI and test binaries for maximum portability**
 
 ---
 
@@ -184,9 +186,19 @@ g++ -std=c++17 -lgmp -lgmpxx -o rsa_test tests/rsa_test.cpp
 ./rsa_test
 ```
 
----
+### Compile Statically Linked CLI and Test Binaries
 
-Here are updated usage examples using the actual API function names from your rsa.hpp file, covering PEM, PKCS#8, X.509 formats, and encryption/decryption for both messages and files:
+To create fully statically linked versions (for easier deployment on systems without GMP or C++ runtime shared libraries):
+
+```sh
+# Statically linked CLI (output: bin/rsa_static_cli)
+g++ -o bin/rsa_static_cli bin/rsa_cli.cpp /usr/lib/x86_64-linux-gnu/libgmp.a -lgmpxx -static-libgcc -static-libstdc++
+
+# Statically linked test binary (output: tests/rsa_static_test)
+g++ -o tests/rsa_static_test tests/rsa_test.cpp /usr/lib/x86_64-linux-gnu/libgmp.a -lgmpxx -static-libgcc -static-libstdc++
+```
+
+Both binaries will be completely self-contained and should run on any compatible Linux system without requiring GMP or C++ runtime to be installed.
 
 ---
 
@@ -336,17 +348,23 @@ auto priv_pkcs8 = RSA::RSAPrivateKey::load_pkcs8_pem("private_pkcs8.pem");
 
 ---
 
----
-
 ## Command-Line Interface: rsa_cli
 
 The project includes a robust CLI tool, `rsa_cli`, for generating keys, encrypting, and decrypting messages or files.  
 It handles user prompts, colored output, and supports all core library functionality.
 
+**Statically linked CLI binary (`rsa_static_cli`) is available in `bin/` for easy deployment.**
+
 ### CLI Usage
 
 ```sh
 ./rsa_cli <command> [options]
+```
+
+Or, for the statically linked version:
+
+```sh
+./rsa_static_cli <command> [options]
 ```
 
 #### Main Commands
@@ -412,6 +430,8 @@ It handles user prompts, colored output, and supports all core library functiona
 ./rsa_cli decrypt --priv private.pem --in "base64ciphertext" --out message.txt --format base64 --msg
 ```
 
+**All commands above also work with `./rsa_static_cli`, the statically linked version.**
+
 ---
 
 ## File/Code Structure
@@ -432,19 +452,21 @@ It handles user prompts, colored output, and supports all core library functiona
   - Generates keys, saves/loads keys from PEM files.
   - Demonstrates message and file encryption/decryption.
 
-### `bin/rsa_cli.cpp`
+### `bin/rsa_cli.cpp` and `bin/rsa_static_cli`
 
 - Fully-featured CLI for real-world use.
 - Interactive prompts, colorized output, robust error handling.
 - Supports key generation, encryption, and decryption of files and messages.
 - Multiple output/input formats (binary, hex, base64).
+- **`rsa_static_cli`**: Statically linked, portable CLI binary.
 
-### `tests/rsa_test.cpp`
+### `tests/rsa_test.cpp` and `tests/rsa_static_test`
 
 - Automated test suite:
   - Tests all key sizes, file types, and output formats.
   - Reports results with color-coded output and statistics.
   - Demonstrates practical/educational limitations (e.g., RSA cannot encrypt large files directly).
+- **`rsa_static_test`**: Statically linked, portable test binary.
 
 ---
 
@@ -456,9 +478,16 @@ Run the test suite with:
 ./rsa_test
 ```
 
+Or use the statically linked version:
+
+```sh
+./rsa_static_test
+```
+
 - Generates various files (text, binary, empty, large).
 - Validates correct round-trip encryption/decryption.
 - Highlights edge cases (empty/large files skipped with warnings).
+- The statically linked test binary does not require shared GMP or C++ libraries.
 
 ---
 
@@ -472,6 +501,7 @@ Run the test suite with:
   - Use MSYS2/MinGW or WSL for best experience.
 - **Filesystem/Paths:**  
   Use forward slashes `/` for cross-platform compatibility or adjust paths as necessary.
+- **Statically linked binaries** (`rsa_static_cli`, `rsa_static_test`) are recommended for Linux deployment where you want to avoid dynamic library dependencies.
 
 ---
 
@@ -503,3 +533,5 @@ MIT License (see [LICENSE](LICENSE) file).
 
 **Warning:**  
 Do NOT use this implementation for protecting real secrets or in production systems. For professional cryptography, use vetted libraries and protocols.
+
+---
