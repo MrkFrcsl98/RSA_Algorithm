@@ -1,5 +1,13 @@
 # RSA_Algorithm
 
+[![License: MIT](https://img.shields.io/badge/license-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![C++17 Ready](https://img.shields.io/badge/C%2B%2B-17-blue.svg)](https://en.cppreference.com/w/cpp/17)
+[![RSA Algorithm](https://img.shields.io/badge/algorithm-RSA-lightgrey.svg)](https://en.wikipedia.org/wiki/RSA_(cryptosystem))
+[![Key Sizes: Customizable](https://img.shields.io/badge/key%20sizes-customizable-green.svg)](https://en.wikipedia.org/wiki/RSA_(cryptosystem)#Key_generation)
+[![Asymmetric Encryption](https://img.shields.io/badge/type-asymmetric-important.svg)](https://en.wikipedia.org/wiki/Public-key_cryptography)
+[![Header-only](https://img.shields.io/badge/header--only-yes-critical.svg)](https://github.com/MrkFrcsl98/RSA_Algorithm)
+[![Status: Educational](https://img.shields.io/badge/status-educational-important.svg)](#security-notes-and-disclaimer)
+
 **RSA (Rivest–Shamir–Adleman) Asymmetric Encryption Algorithm Implementation — Educational Purposes**
 
 ---
