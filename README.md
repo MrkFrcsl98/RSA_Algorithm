@@ -6,7 +6,7 @@
 [![Key Sizes: Customizable](https://img.shields.io/badge/key%20sizes-customizable-green.svg)](https://en.wikipedia.org/wiki/RSA_(cryptosystem)#Key_generation)
 [![Asymmetric Encryption](https://img.shields.io/badge/type-asymmetric-important.svg)](https://en.wikipedia.org/wiki/Public-key_cryptography)
 [![Header-only](https://img.shields.io/badge/header--only-yes-critical.svg)](https://github.com/MrkFrcsl98/RSA_Algorithm)
-[![Status: Educational](https://img.shields.io/badge/status-educational-important.svg)](#security-notes-and-disclaimer)
+[![Status: Educational](https://img.shields.io/badge/status-educational-important.svg)](#security-notes)
 
 **RSA (Rivest–Shamir–Adleman) Asymmetric Encryption Algorithm Implementation — Educational Purposes**
 
