@@ -18,15 +18,15 @@
 #define __attr_malloc __attribute__((malloc))
 #define __attr_hot __attribute__((hot))
 #define __attr_cold __attribute__((cold))
-#define likely(x) __builtin_expect(!!(x), 1)
-#define unlikely(x) __builtin_expect(!!(x), 0)
+#define __likely(x) __builtin_expect(!!(x), 1)
+#define __unlikely(x) __builtin_expect(!!(x), 0)
 #else
 #define __attr_nodiscard
 #define __attr_malloc
 #define __attr_hot
 #define __attr_cold
-#define likely(x) (x)
-#define unlikely(x) (x)
+#define __likely(x) (x)
+#define __unlikely(x) (x)
 #endif
 
 #ifdef __cplusplus
@@ -56,11 +56,11 @@ __attr_hot __attr_nodiscard int rsa_get_secure_random_bytes(uint8_t *__restrict_
   return BCryptGenRandom(NULL, buf, (ULONG)len, BCRYPT_USE_SYSTEM_PREFERRED_RNG) == 0;
 #else
   FILE *f = fopen("/dev/urandom", "rb");
-  if (unlikely(!f))
+  if (__unlikely(!f))
     return 0;
   size_t n = fread(buf, 1, len, f);
   fclose(f);
-  return likely(n == len);
+  return __likely(n == len);
 #endif
 }
 
@@ -148,7 +148,7 @@ __attr_hot static void sha256_update(sha256_ctx *__restrict__ ctx, const uint8_t
   }
 }
 
-__attr_hot __attr_nodiscard static void sha256_final(sha256_ctx *__restrict__ ctx, uint8_t *__restrict__ hash /* hash[32] */
+__attr_hot static void sha256_final(sha256_ctx *__restrict__ ctx, uint8_t *__restrict__ hash /* hash[32] */
                                                      ) __noexcept {
   uint32_t i = ctx->datalen;
   ctx->bitlen += ctx->datalen * 8;
@@ -182,7 +182,7 @@ __attr_hot __attr_nodiscard static void sha256_final(sha256_ctx *__restrict__ ct
   }
 }
 
-__attr_hot __attr_nodiscard void sha256(const uint8_t *__restrict__ data, size_t len, uint8_t *__restrict__ out) __noexcept {
+__attr_hot void sha256(const uint8_t *__restrict__ data, size_t len, uint8_t *__restrict__ out) __noexcept {
   sha256_ctx ctx;
   sha256_init(&ctx);
   sha256_update(&ctx, data, len);
@@ -228,7 +228,7 @@ __attr_nodiscard __attr_hot int oaep_encode(const uint8_t *__restrict__ in, size
 
   // Generate random seed
   uint8_t *seed = (uint8_t *)malloc(hLen);
-  if (!rsa_get_secure_random_bytes(seed, hLen)) {
+  if (__likely(rsa_get_secure_random_bytes(seed, hLen))) {
     for (size_t i = 0; i < hLen; ++i)
       seed[i] = rand() & 0xFF; // Replace with secure RNG in production
   }
@@ -288,7 +288,7 @@ __attr_nodiscard __attr_hot int oaep_decode(const uint8_t *__restrict__ in, size
   // Check lHash (for best security, use constant-time memcmp here)
   uint8_t lHash[32];
   sha256(label ? label : (const uint8_t *)"", labellen, lHash);
-  if (memcmp(DB, lHash, hLen) != 0) {
+  if (__likely(memcmp(DB, lHash, hLen))) {
     free(DB);
     free(seedMask);
     free(dbMask);
@@ -357,7 +357,7 @@ void rsa_generate_keypair(rsa_public_key *pub, rsa_private_key *priv, int bits) 
 
   // d = e^{-1} mod phi
   mpz_init(priv->d);
-  if (!modinv(priv->d, priv->e, phi)) {
+  if (!__unlikely(modinv(priv->d, priv->e, phi))) {
     printf("No modular inverse!\n");
     exit(1);
   }
@@ -381,7 +381,11 @@ void rsa_generate_keypair(rsa_public_key *pub, rsa_private_key *priv, int bits) 
   mpz_mod(priv->dQ, priv->d, dQ);
 
   mpz_init(qInv);
-  modinv(qInv, priv->q, priv->p);
+  if(!__unlikely(modinv(qInv, priv->q, priv->p))) {
+    printf("No modular inverse!\n");
+    exit(1);
+  }
+    
   mpz_set(priv->qInv, qInv);
 
   // Fill public key
@@ -395,7 +399,7 @@ void rsa_generate_keypair(rsa_public_key *pub, rsa_private_key *priv, int bits) 
 // Key storage: PEM-like (hex, one value per line)
 __attr_nodiscard int rsa_save_public(const char *fname, const rsa_public_key *pub) {
   FILE *f = fopen(fname, "w");
-  if (!f)
+  if (!__unlikely(f))
     return 0;
   gmp_fprintf(f, "%Zx\n%Zx\n", pub->n, pub->e);
   fclose(f);
@@ -404,7 +408,7 @@ __attr_nodiscard int rsa_save_public(const char *fname, const rsa_public_key *pu
 
 __attr_nodiscard int rsa_load_public(const char *fname, rsa_public_key *pub) {
   FILE *f = fopen(fname, "r");
-  if (!f)
+  if (!__unlikely(f))
     return 0;
   mpz_init(pub->n);
   mpz_init(pub->e);
@@ -415,7 +419,7 @@ __attr_nodiscard int rsa_load_public(const char *fname, rsa_public_key *pub) {
 
 __attr_nodiscard int rsa_save_private(const char *fname, const rsa_private_key *priv) {
   FILE *f = fopen(fname, "w");
-  if (!f)
+  if (!__unlikely(f))
     return 0;
   gmp_fprintf(f, "%Zx\n%Zx\n%Zx\n%Zx\n%Zx\n%Zx\n%Zx\n%Zx\n", priv->n, priv->e, priv->d, priv->p, priv->q, priv->dP, priv->dQ, priv->qInv);
   fclose(f);
@@ -424,7 +428,7 @@ __attr_nodiscard int rsa_save_private(const char *fname, const rsa_private_key *
 
 __attr_nodiscard int rsa_load_private(const char *fname, rsa_private_key *priv) {
   FILE *f = fopen(fname, "r");
-  if (!f)
+  if (!__unlikely(f))
     return 0;
   mpz_inits(priv->n, priv->e, priv->d, priv->p, priv->q, priv->dP, priv->dQ, priv->qInv, NULL);
   gmp_fscanf(f, "%Zx\n%Zx\n%Zx\n%Zx\n%Zx\n%Zx\n%Zx\n%Zx\n", priv->n, priv->e, priv->d, priv->p, priv->q, priv->dP, priv->dQ, priv->qInv);
@@ -440,7 +444,7 @@ void rsa_decrypt(mpz_t out, const mpz_t in, const rsa_private_key *priv) { mpz_p
 int rsa_encrypt_oaep(mpz_t out, const uint8_t *in, size_t inlen, const rsa_public_key *pub, const uint8_t *label, size_t labellen) {
   size_t k = (mpz_sizeinbase(pub->n, 2) + 7) / 8;
   uint8_t *em = (uint8_t *)malloc(k);
-  if (!oaep_encode(in, inlen, em, k, label, labellen)) {
+  if (!__unlikely(oaep_encode(in, inlen, em, k, label, labellen))) {
     free(em);
     return 0;
   }
@@ -458,7 +462,7 @@ int rsa_decrypt_oaep(uint8_t *out, size_t *outlen, const mpz_t in, const rsa_pri
   rsa_decrypt(m, in, priv);
   size_t tmplen;
   mpz_export(em, &tmplen, 1, 1, 1, 0, m);
-  if (tmplen < k) {
+  if (__likely(tmplen < k)) {
     memmove(em + (k - tmplen), em, tmplen);
     memset(em, 0, k - tmplen);
   }
@@ -478,8 +482,8 @@ void rsa_clear_private(rsa_private_key *priv) { mpz_clears(priv->n, priv->e, pri
 
 // ASN.1/DER helpers
 static size_t asn1_encode_len(unsigned char *out, size_t len) {
-  if (len < 128) {
-    if (out)
+  if (__likely(len < 128)) {
+    if (__likely(out))
       out[0] = (unsigned char)len;
     return 1;
   } else {
@@ -488,10 +492,10 @@ static size_t asn1_encode_len(unsigned char *out, size_t len) {
       ++n;
       l >>= 8;
     }
-    if (out)
+    if (__likely(out))
       out[0] = 0x80 | n;
     for (size_t i = 0; i < n; ++i)
-      if (out)
+      if (__likely(out))
         out[1 + i] = (unsigned char)(len >> (8 * (n - 1 - i)));
     return 1 + n;
   }
@@ -503,13 +507,13 @@ static size_t asn1_encode_integer(const mpz_t x, unsigned char *out) {
   mpz_export(buf + 1, &count, 1, 1, 1, 0, x);
   buf[0] = 0x00; // for possible sign bit
   size_t off = 0;
-  if (count && (buf[1] & 0x80)) {
+  if (__likely(count && (buf[1] & 0x80))) {
     off = 0;
     count++;
   } else {
     off = 1;
   }
-  if (out) {
+  if (__likely(out)) {
     *out++ = 0x02;
     size_t lenlen = asn1_encode_len(out, count);
     out += lenlen;
@@ -528,7 +532,7 @@ size_t rsa_serialize_public_der(const rsa_public_key *pub, unsigned char *der, s
 
   size_t seqlen = nlen + elen;
   size_t lenlen = asn1_encode_len(NULL, seqlen);
-  if (der) {
+  if (__likely(der)) {
     der[0] = 0x30;
     asn1_encode_len(der + 1, seqlen);
     memcpy(der + 1 + lenlen, tmp, nlen + elen);
@@ -554,7 +558,7 @@ size_t rsa_serialize_private_der(const rsa_private_key *priv, unsigned char *der
 
   size_t seqlen = off;
   size_t lenlen = asn1_encode_len(NULL, seqlen);
-  if (der) {
+  if (__likely(der)) {
     der[0] = 0x30;
     asn1_encode_len(der + 1, seqlen);
     memcpy(der + 1 + lenlen, tmp, off);
@@ -565,7 +569,7 @@ size_t rsa_serialize_private_der(const rsa_private_key *priv, unsigned char *der
 // --- ASN.1 DER deserialization (minimal, only for keys) ---
 static size_t asn1_parse_len(const unsigned char *der, size_t *off) {
   size_t len = der[(*off)++];
-  if (len & 0x80) {
+  if (__likely(len & 0x80)) {
     int n = len & 0x7F;
     len = 0;
     while (n--)
@@ -575,7 +579,7 @@ static size_t asn1_parse_len(const unsigned char *der, size_t *off) {
 }
 
 static size_t asn1_parse_integer(mpz_t x, const unsigned char *der, size_t *off) {
-  if (der[*off] != 0x02)
+  if (__unlikely(der[*off] != 0x02))
     return 0;
   (*off)++;
   size_t ilen = asn1_parse_len(der, off);
@@ -592,15 +596,15 @@ __attr_malloc char *pem_encode(const char *type, const unsigned char *der, size_
   p += sprintf(p, "-----BEGIN %s-----\n", type);
   for (size_t i = 0; i < der_len; i += 3) {
     unsigned val = der[i] << 16;
-    if (i + 1 < der_len)
+    if (__likely(i + 1 < der_len))
       val |= der[i + 1] << 8;
-    if (i + 2 < der_len)
+    if (__likely(i + 2 < der_len))
       val |= der[i + 2];
     *p++ = b64tab[(val >> 18) & 0x3F];
     *p++ = b64tab[(val >> 12) & 0x3F];
     *p++ = (i + 1 < der_len) ? b64tab[(val >> 6) & 0x3F] : '=';
     *p++ = (i + 2 < der_len) ? b64tab[val & 0x3F] : '=';
-    if (((i / 3 + 1) * 4) % 64 == 0)
+    if (__unlikely(((i / 3 + 1) * 4) % 64 == 0))
       *p++ = '\n';
   }
   if (*(p - 1) != '\n')
@@ -611,14 +615,14 @@ __attr_malloc char *pem_encode(const char *type, const unsigned char *der, size_
 
 __attr_malloc unsigned char *pem_decode(const char *pem, size_t *outlen) {
   const char *p = strstr(pem, "-----BEGIN");
-  if (!p)
+  if (!__unlikely(p))
     return NULL;
   p = strchr(p, '\n');
-  if (!p)
+  if (!__unlikely(p))
     return NULL;
   p++;
   const char *q = strstr(p, "-----END");
-  if (!q)
+  if (!__unlikely(q))
     return NULL;
   char *buf = (char *)malloc(q - p + 1);
   size_t blen = 0;
@@ -705,7 +709,7 @@ __attr_nodiscard int rsa_save_public_pem(const char *fname, const rsa_public_key
   size_t derlen = rsa_serialize_public_der(pub, der, sizeof(der));
   char *pem = pem_encode("RSA PUBLIC KEY", der, derlen);
   FILE *f = fopen(fname, "w");
-  if (!f) {
+  if (!__unlikely(f)) {
     free(pem);
     return 0;
   }
@@ -717,7 +721,7 @@ __attr_nodiscard int rsa_save_public_pem(const char *fname, const rsa_public_key
 
 __attr_nodiscard int rsa_load_public_pem(const char *fname, rsa_public_key *pub) {
   FILE *f = fopen(fname, "r");
-  if (!f)
+  if (!__unlikely(f))
     return 0;
   fseek(f, 0, SEEK_END);
   long sz = ftell(f);
@@ -739,7 +743,7 @@ __attr_nodiscard int rsa_save_private_pem(const char *fname, const rsa_private_k
   size_t derlen = rsa_serialize_private_der(priv, der, sizeof(der));
   char *pem = pem_encode("RSA PRIVATE KEY", der, derlen);
   FILE *f = fopen(fname, "w");
-  if (!f) {
+  if (!__unlikely(f)) {
     free(pem);
     return 0;
   }
@@ -751,7 +755,7 @@ __attr_nodiscard int rsa_save_private_pem(const char *fname, const rsa_private_k
 
 __attr_nodiscard int rsa_load_private_pem(const char *fname, rsa_private_key *priv) {
   FILE *f = fopen(fname, "r");
-  if (!f)
+  if (!__unlikely(f))
     return 0;
   fseek(f, 0, SEEK_END);
   long sz = ftell(f);
@@ -799,7 +803,7 @@ size_t rsa_serialize_public_x509_der(const rsa_public_key *pub, unsigned char *d
   memcpy(tmp + off, bitstr, bitstr_len);
   off += bitstr_len;
 
-  if (der) {
+  if (__likely(der)) {
     der[0] = 0x30; // SEQUENCE
     size_t lenlen = asn1_encode_len(der + 1, off);
     memcpy(der + 1 + lenlen, tmp, off);
@@ -838,7 +842,7 @@ size_t rsa_serialize_private_pkcs8_der(const rsa_private_key *priv, unsigned cha
   memcpy(tmp + off, pkcs1, pkcs1_len);
   off += pkcs1_len;
 
-  if (der) {
+  if (__likely(der)) {
     der[0] = 0x30;
     size_t lenlen = asn1_encode_len(der + 1, off);
     memcpy(der + 1 + lenlen, tmp, off);
@@ -904,7 +908,7 @@ __attr_nodiscard int rsa_save_public_x509_pem(const char *fname, const rsa_publi
   size_t derlen = rsa_serialize_public_x509_der(pub, der, sizeof(der));
   char *pem = pem_encode("PUBLIC KEY", der, derlen);
   FILE *f = fopen(fname, "w");
-  if (!f) {
+  if (!__unlikely(f)) {
     free(pem);
     return 0;
   }
@@ -916,7 +920,7 @@ __attr_nodiscard int rsa_save_public_x509_pem(const char *fname, const rsa_publi
 
 __attr_nodiscard int rsa_load_public_x509_pem(const char *fname, rsa_public_key *pub) {
   FILE *f = fopen(fname, "r");
-  if (!f)
+  if (!__unlikely(f))
     return 0;
   fseek(f, 0, SEEK_END);
   long sz = ftell(f);
@@ -938,7 +942,7 @@ __attr_nodiscard int rsa_save_private_pkcs8_pem(const char *fname, const rsa_pri
   size_t derlen = rsa_serialize_private_pkcs8_der(priv, der, sizeof(der));
   char *pem = pem_encode("PRIVATE KEY", der, derlen);
   FILE *f = fopen(fname, "w");
-  if (!f) {
+  if (!__unlikely(f)) {
     free(pem);
     return 0;
   }
@@ -950,7 +954,7 @@ __attr_nodiscard int rsa_save_private_pkcs8_pem(const char *fname, const rsa_pri
 
 __attr_nodiscard int rsa_load_private_pkcs8_pem(const char *fname, rsa_private_key *priv) {
   FILE *f = fopen(fname, "r");
-  if (!f)
+  if (!__unlikely(f))
     return 0;
   fseek(f, 0, SEEK_END);
   long sz = ftell(f);
@@ -1041,7 +1045,7 @@ __attr_nodiscard int rsa_decrypt_file(const char *infile, const char *outfile, c
 // Buffer/file helpers
 __attr_nodiscard int save_file_hex(const char *fname, const unsigned char *buf, size_t len) {
   FILE *f = fopen(fname, "w");
-  if (!f)
+  if (!__unlikely(f))
     return 0;
   for (size_t i = 0; i < len; ++i)
     fprintf(f, "%02x", buf[i]);
@@ -1051,7 +1055,7 @@ __attr_nodiscard int save_file_hex(const char *fname, const unsigned char *buf, 
 
 __attr_nodiscard int save_file_base64(const char *fname, const unsigned char *buf, size_t len) {
   FILE *f = fopen(fname, "w");
-  if (!f)
+  if (!__unlikely(f))
     return 0;
   size_t i;
   for (i = 0; i + 2 < len; i += 3) {
@@ -1086,7 +1090,7 @@ __attr_nodiscard int save_file_base64(const char *fname, const unsigned char *bu
 
 __attr_nodiscard int save_file_ascii(const char *fname, const unsigned char *buf, size_t len) {
   FILE *f = fopen(fname, "w");
-  if (!f)
+  if (!__unlikely(f))
     return 0;
   for (size_t i = 0; i < len; ++i)
     fputc(isprint(buf[i]) ? buf[i] : '.', f);
