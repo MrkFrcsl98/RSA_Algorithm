@@ -5,8 +5,6 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
-
-// i need to include this in the source file if i split this  -> .h|.c
 #include <ctype.h>
 #include <stdlib.h>
 #include <string.h>
@@ -228,7 +226,7 @@ __attr_nodiscard __attr_hot int oaep_encode(const uint8_t *__restrict__ in, size
 
   // Generate random seed
   uint8_t *seed = (uint8_t *)malloc(hLen);
-  if (__likely(rsa_get_secure_random_bytes(seed, hLen))) {
+  if (!__unlikely(rsa_get_secure_random_bytes(seed, hLen))) {
     for (size_t i = 0; i < hLen; ++i)
       seed[i] = rand() & 0xFF; // Replace with secure RNG in production
   }
