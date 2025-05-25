@@ -142,7 +142,7 @@ This allows verification of both authenticity (only the private key holder could
 ## Directory Structure
 
 - `src/` — Main C++ source code and headers
-- `bin/` — Command-line interface (CLI) implementation and **statically linked CLI binary (`rsa_static_cli`)**
+- `bin/` — Command-line interface (CLI) implementation and **statically linked CLI binary (`srsa_cli`)**
 - `tests/` — Test suite and **statically linked test binary (`rsa_static_test`)**
 - `examples/` — Example programs (if present)
 - `README.md` — Project documentation
@@ -199,8 +199,8 @@ g++ -std=c++17 -lgmp -lgmpxx -o rsa_test tests/rsa_test.cpp
 To create fully statically linked versions (for easier deployment on systems without GMP or C++ runtime shared libraries):
 
 ```sh
-# Statically linked CLI (output: bin/rsa_static_cli)
-g++ -o bin/rsa_static_cli bin/rsa_cli.cpp /usr/lib/x86_64-linux-gnu/libgmp.a -lgmpxx -static-libgcc -static-libstdc++
+# Statically linked CLI (output: bin/srsa_cli)
+g++ -o bin/srsa_cli bin/rsa_cli.cpp /usr/lib/x86_64-linux-gnu/libgmp.a -lgmpxx -static-libgcc -static-libstdc++
 
 # Statically linked test binary (output: tests/rsa_static_test)
 g++ -o tests/rsa_static_test tests/rsa_test.cpp /usr/lib/x86_64-linux-gnu/libgmp.a -lgmpxx -static-libgcc -static-libstdc++
@@ -361,7 +361,7 @@ auto priv_pkcs8 = RSA::RSAPrivateKey::load_pkcs8_pem("private_pkcs8.pem");
 The project includes a robust CLI tool, `rsa_cli`, for generating keys, encrypting, and decrypting messages or files.  
 It handles user prompts, colored output, and supports all core library functionality.
 
-**Statically linked CLI binary (`rsa_static_cli`) is available in `bin/` for easy deployment.**
+**Statically linked CLI binary (`srsa_cli`) is available in `bin/` for easy deployment.**
 
 ### CLI Usage
 
@@ -372,7 +372,7 @@ It handles user prompts, colored output, and supports all core library functiona
 Or, for the statically linked version:
 
 ```sh
-./rsa_static_cli <command> [options]
+./srsa_cli <command> [options]
 ```
 
 #### Main Commands
@@ -386,8 +386,8 @@ Or, for the statically linked version:
 | Command   | Required Flags                                      | Optional Flags & Arguments                                                                                                    | Description                                 |
 |-----------|-----------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------|---------------------------------------------|
 | genkey    | `--pub <pub.pem>`<br>`--priv <priv.pem>`            | `--bits <size>`<br>`--pem-type <pkcs1\|x509>`<br>`--quick`<br>`--force`<br>`--no-color`                                      | Generate RSA keypair                        |
-| encrypt   | `--pub <pub.pem>`<br>`--in <file\|msg>`<br>`--out <file>` | `--format <binary\|base64\|hex>`<br>`--pem-type <pkcs1\|x509>`<br>`--msg`<br>`--quick`<br>`--force`<br>`--no-color` | Encrypt file or message          |
-| decrypt   | `--priv <priv.pem>`<br>`--in <file\|msg>`<br>`--out <file>`| `--format <binary\|base64\|hex>`<br>`--pem-type <pkcs1\|x509>`<br>`--msg`<br>`--quick`<br>`--force`<br>`--no-color` | Decrypt file or message         |
+| encrypt   | `--pub <pub.pem>`<br>`--in <file\|msg>`<br>`--out <file>` | `<binary\|base64\|hex>`<br>`--pem-type <pkcs1\|x509>`<br>`--msg`<br>`--quick`<br>`--force`<br>`--no-color` | Encrypt file or message          |
+| decrypt   | `--priv <priv.pem>`<br>`--in <file\|msg>`<br>`--out <file>`| `<binary\|base64\|hex>`<br>`--pem-type <pkcs1\|x509>`<br>`--msg`<br>`--quick`<br>`--force`<br>`--no-color` | Decrypt file or message         |
 |           |                                                     | `--help`<br>`--version`                                                                                                      | Show help/version info                      |
 
 #### Flag Descriptions
@@ -397,14 +397,12 @@ Or, for the statically linked version:
 - `--in <file>`: Input file (for `--msg`, input is a message string)
 - `--out <file>`: Output file
 - `--bits <size>`: Key size (1024, 2048, 3072, 4096; default: 1024)
-- `--format <type>`: Output format (`binary`, `base64`, or `hex`; default: binary)
 - `--pem-type <pkcs1|x509>`: **PEM key encoding type; choose between `pkcs1` (traditional RSA) or `x509` (PKCS#8/X.509). Default: `pkcs1`.**
 - `--msg`: Treat input as a string message instead of a file
 - `--quick`: Suppress confirmation prompts
 - `--force`: Overwrite existing output files without prompting
 - `--no-color`: Disable colored output
 - `--help`: Show help and exit
-- `--version`: Print the CLI version
 
 #### CLI Usage Examples
 
@@ -418,27 +416,17 @@ Or, for the statically linked version:
 ./rsa_cli genkey --pub public.pem --priv private.pem --bits 2048 --pem-type x509 --quick
 ```
 
-**Encrypt a file as binary using a specific PEM type:**
+**Encrypt a file using a specific PEM type:**
 ```sh
-./rsa_cli encrypt --pub public.pem --in myfile.txt --out encrypted.bin --format binary --pem-type pkcs1
+./rsa_cli encrypt --pub public.pem --in myfile.txt --out encrypted.bin --pem-type pkcs1
 ```
 
 **Decrypt a file with X.509/PKCS#8:**
 ```sh
-./rsa_cli decrypt --priv private.pem --in encrypted.bin --out decrypted.txt --format binary --pem-type x509
+./rsa_cli decrypt --priv private.pem --in encrypted.bin --out decrypted.txt --pem-type x509
 ```
 
-**Encrypt a message to base64:**
-```sh
-./rsa_cli encrypt --pub public.pem --in "my secret" --out encrypted.b64 --format base64 --msg
-```
-
-**Decrypt a base64 message:**
-```sh
-./rsa_cli decrypt --priv private.pem --in "base64ciphertext" --out message.txt --format base64 --msg
-```
-
-**All commands above also work with `./rsa_static_cli`, the statically linked version.**
+**All commands above also work with `./srsa_cli`, the statically linked version.**
 
 ---
 
@@ -460,13 +448,13 @@ Or, for the statically linked version:
   - Generates keys, saves/loads keys from PEM files.
   - Demonstrates message and file encryption/decryption.
 
-### `bin/rsa_cli.cpp` and `bin/rsa_static_cli`
+### `bin/rsa_cli.cpp` and `bin/srsa_cli`
 
 - Fully-featured CLI for real-world use.
 - Interactive prompts, colorized output, robust error handling.
 - Supports key generation, encryption, and decryption of files and messages.
 - Multiple output/input formats (binary, hex, base64).
-- **`rsa_static_cli`**: Statically linked, portable CLI binary.
+- **`srsa_cli`**: Statically linked, portable CLI binary.
 
 ### `tests/rsa_test.cpp` and `tests/rsa_static_test`
 
@@ -509,7 +497,7 @@ Or use the statically linked version:
   - Use MSYS2/MinGW or WSL for best experience.
 - **Filesystem/Paths:**  
   Use forward slashes `/` for cross-platform compatibility or adjust paths as necessary.
-- **Statically linked binaries** (`rsa_static_cli`, `rsa_static_test`) are recommended for Linux deployment where you want to avoid dynamic library dependencies.
+- **Statically linked binaries** (`srsa_cli`, `rsa_static_test`) are recommended for Linux deployment where you want to avoid dynamic library dependencies.
 
 ---
 
