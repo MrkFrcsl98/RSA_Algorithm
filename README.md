@@ -23,7 +23,6 @@
 - [Usage Examples](#usage-examples)
 - [Command-Line Interface: rsa_cli](#command-line-interface-rsa_cli)
 - [File/Code Structure](#filecode-structure)
-- [Testing](#testing)
 - [OS Compatibility & Warnings](#os-compatibility--warnings)
 - [Security Notes](#security-notes)
 - [License](#license)
@@ -39,7 +38,6 @@ This project provides a modern, header-only C++ implementation of the RSA crypto
 - **Supports both PKCS#1 and PKCS#8/X.509 PEM key types for RSA keys**
 - Message and file encryption/decryption with selectable output formats
 - A CLI tool for practical usage
-- Comprehensive test suite
 - **Statically linked binaries available for easy distribution and system compatibility**
 
 **Note:** This implementation is for educational purposes only and should NOT be used in production settings.
@@ -143,7 +141,6 @@ This allows verification of both authenticity (only the private key holder could
 
 - `src/` — Main C++ source code and headers
 - `bin/` — Command-line interface (CLI) implementation and **statically linked CLI binary (`srsa_cli`)**
-- `tests/` — Test suite and **statically linked test binary (`rsa_static_test`)**
 - `examples/` — Example programs (if present)
 - `README.md` — Project documentation
 - `LICENSE` — License file
@@ -157,7 +154,6 @@ This allows verification of both authenticity (only the private key holder could
 - **File and message encryption/decryption**
 - **Robust error handling** and user feedback (colored output in CLI)
 - **Cross-platform (see OS notes below)**
-- **Statically linked CLI and test binaries for maximum portability**
 
 ---
 
@@ -169,7 +165,6 @@ This allows verification of both authenticity (only the private key holder could
     - Ubuntu/Debian: `sudo apt-get install libgmp-dev libgmpxx-dev`
     - macOS (Homebrew): `brew install gmp`
 - Standard C++17 library
-- (For tests) C++17 filesystem API
 
 ---
 
@@ -187,14 +182,8 @@ g++ -std=c++17 -lgmp -lgmpxx -o rsa_cli bin/rsa_cli.cpp
 g++ -std=c++17 -lgmp -lgmpxx -o rsa_example src/main.cpp
 ```
 
-### Compile and Run the Tests
 
-```sh
-g++ -std=c++17 -lgmp -lgmpxx -o rsa_test tests/rsa_test.cpp
-./rsa_test
-```
-
-### Compile Statically Linked CLI and Test Binaries
+### Compile Statically Linked CLI Binary
 
 To create fully statically linked versions (for easier deployment on systems without GMP or C++ runtime shared libraries):
 
@@ -202,9 +191,7 @@ To create fully statically linked versions (for easier deployment on systems wit
 # Statically linked CLI (output: bin/srsa_cli)
 g++ -o bin/srsa_cli bin/rsa_cli.cpp /usr/lib/x86_64-linux-gnu/libgmp.a -lgmpxx -static-libgcc -static-libstdc++
 
-# Statically linked test binary (output: tests/rsa_static_test)
-g++ -o tests/rsa_static_test tests/rsa_test.cpp /usr/lib/x86_64-linux-gnu/libgmp.a -lgmpxx -static-libgcc -static-libstdc++
-```
+
 
 Both binaries will be completely self-contained and should run on any compatible Linux system without requiring GMP or C++ runtime to be installed.
 
@@ -456,35 +443,6 @@ Or, for the statically linked version:
 - Multiple output/input formats (binary, hex, base64).
 - **`srsa_cli`**: Statically linked, portable CLI binary.
 
-### `tests/rsa_test.cpp` and `tests/rsa_static_test`
-
-- Automated test suite:
-  - Tests all key sizes, file types, and output formats.
-  - Reports results with color-coded output and statistics.
-  - Demonstrates practical/educational limitations (e.g., RSA cannot encrypt large files directly).
-- **`rsa_static_test`**: Statically linked, portable test binary.
-
----
-
-## Testing
-
-Run the test suite with:
-
-```sh
-./rsa_test
-```
-
-Or use the statically linked version:
-
-```sh
-./rsa_static_test
-```
-
-- Generates various files (text, binary, empty, large).
-- Validates correct round-trip encryption/decryption.
-- Highlights edge cases (empty/large files skipped with warnings).
-- The statically linked test binary does not require shared GMP or C++ libraries.
-
 ---
 
 ## OS Compatibility & Warnings
@@ -497,7 +455,7 @@ Or use the statically linked version:
   - Use MSYS2/MinGW or WSL for best experience.
 - **Filesystem/Paths:**  
   Use forward slashes `/` for cross-platform compatibility or adjust paths as necessary.
-- **Statically linked binaries** (`srsa_cli`, `rsa_static_test`) are recommended for Linux deployment where you want to avoid dynamic library dependencies.
+- **Statically linked binaries** (`srsa_cli`) are recommended for Linux deployment where you want to avoid dynamic library dependencies.
 
 ---
 
