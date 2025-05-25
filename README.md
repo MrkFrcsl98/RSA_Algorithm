@@ -9,6 +9,14 @@
 [![Status: Educational](https://img.shields.io/badge/status-educational-important.svg)](#security-notes)
 
 **RSA (Rivest–Shamir–Adleman) Asymmetric Encryption Algorithm Implementation — Educational Purposes**
+## Note
+This RSA implementation now includes enhanced security features:
+
+- **OAEP** with SHA-256: Encryption uses robust OAEP padding for strong semantic security.
+- **Constant-Time Decoding**: OAEP decoding avoids timing leaks, protecting against **side-channel attacks**.
+- RSA **Blinding**: Decryption uses **blinding** to prevent **timing** and **power analysis attacks**.
+
+These updates make RSA encryption and decryption in this project significantly more secure against modern cryptographic and side-channel threats.
 
 ---
 
