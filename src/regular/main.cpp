@@ -3,6 +3,7 @@
 #include <cassert>
 
 int main() {
+    
     RSA::KeyPair kp = RSA::GenerateKeyPair(RSA::KeySize::Bits1024);
     kp.public_key.save_x509_pem("public_x509.pem");
     kp.private_key.save_pem("private.pem");
@@ -16,5 +17,10 @@ int main() {
 
     std::cout << dec << std::endl;
     assert(dec == msg);
+
+    const std::string OAEP_LABEL("some label");
+    RSA::FILE::Encrypt("plain.txt", "rsa_enc.bin", pub, RSA::OutputFormat::Binary, OAEP_LABEL);
+    RSA::FILE::Decrypt("rsa_enc.bin", "rsa_dec.txt", priv, RSA::OutputFormat::Binary, OAEP_LABEL);
+
     return 0;
 }
