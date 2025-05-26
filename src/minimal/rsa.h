@@ -242,32 +242,24 @@ static int ct_memcmp(const void *a, const void *b, size_t n) {
 #endif
 }
 
-void ct_mpz_powm(mpz_t rop, const mpz_t base, const mpz_t exp, const mpz_t mod)
-{
-    mpz_t result, b;
-    mpz_inits(result, b, NULL);
-    mpz_set_ui(result, 1);
-    mpz_mod(b, base, mod);
-
+// Montgomery Ladder for Modular Exponentiation (side-channel resistant)
+void montgomery_ladder_powm(mpz_t rop, const mpz_t base, const mpz_t exp, const mpz_t mod) {
+    mpz_t R0, R1;
+    mpz_inits(R0, R1, NULL);
+    mpz_set_ui(R0, 1);
+    mpz_set(R1, base);
     size_t nbits = mpz_sizeinbase(exp, 2);
-    INFO("ct_mpz_powm: base, exp, mod (hex):");
-    dump_mpz(base, "base");
-    dump_mpz(exp, "exp");
-    dump_mpz(mod, "mod");
-    for (ptrdiff_t i = nbits - 1; i >= 0; --i) {
-        mpz_mul(result, result, result);
-        mpz_mod(result, result, mod);
-
-        if (mpz_tstbit(exp, i)) {
-            mpz_mul(result, result, b);
-            mpz_mod(result, result, mod);
+    for (ssize_t i = nbits - 1; i >= 0; --i) {
+        if (mpz_tstbit(exp, i) == 0) {
+            mpz_mul(R1, R0, R1); mpz_mod(R1, R1, mod);
+            mpz_mul(R0, R0, R0); mpz_mod(R0, R0, mod);
         } else {
+            mpz_mul(R0, R0, R1); mpz_mod(R0, R0, mod);
+            mpz_mul(R1, R1, R1); mpz_mod(R1, R1, mod);
         }
     }
-    mpz_set(rop, result);
-    dump_mpz(rop, "ct_mpz_powm result");
-    mpz_clears(result, b, NULL);
-    OK("ct_mpz_powm completed");
+    mpz_set(rop, R0);
+    mpz_clears(R0, R1, NULL);
 }
 
 // --- RSA blinding ---
@@ -295,7 +287,7 @@ void rsa_decrypt_blinded(mpz_t out, const mpz_t in, const rsa_private_key *priv)
 
     // blinded = in * r^e mod n
     INFO("Blinding input and computing r^e mod n");
-    ct_mpz_powm(tmp, r, priv->e, priv->n);
+    montgomery_ladder_powm(tmp, r, priv->e, priv->n);
     dump_mpz(tmp, "r^e mod n");
     mpz_mul(blinded, in, tmp);
     mpz_mod(blinded, blinded, priv->n);
@@ -303,7 +295,7 @@ void rsa_decrypt_blinded(mpz_t out, const mpz_t in, const rsa_private_key *priv)
 
     // decrypted = blinded^d mod n
     INFO("Decrypting blinded value");
-    ct_mpz_powm(tmp, blinded, priv->d, priv->n);
+    montgomery_ladder_powm(tmp, blinded, priv->d, priv->n);
     dump_mpz(tmp, "blinded^d mod n");
 
     // r_inv = r^-1 mod n
@@ -713,15 +705,31 @@ __attr_nodiscard __attr_hot int oaep_decode(
   return 1;
 }
 
-__attr_nodiscard int modinv(mpz_t rop, const mpz_t a, const mpz_t m) {
-  int ret = mpz_invert(rop, a, m) != 0;
-  if (!ret) DBG("modinv: no modular inverse exists!");
-#ifdef RSA_DEBUG
-  else {
-    dump_mpz(rop, "modinv result");
-  }
-#endif
-  return ret;
+// Extended Euclidean Algorithm for Modular Inverse
+int extended_gcd_modinv(mpz_t rop, const mpz_t a, const mpz_t m) {
+    mpz_t r, newr, t, newt, quotient, tmp;
+    mpz_inits(r, newr, t, newt, quotient, tmp, NULL);
+    mpz_set(r, m); mpz_set(newr, a);
+    mpz_set_ui(t, 0); mpz_set_ui(newt, 1);
+
+    while (mpz_cmp_ui(newr, 0) != 0) {
+        mpz_fdiv_q(quotient, r, newr);
+        mpz_set(tmp, newr);
+        mpz_mul(newr, quotient, newr); mpz_sub(newr, r, newr);
+        mpz_set(r, tmp);
+        mpz_set(tmp, newt);
+        mpz_mul(newt, quotient, newt); mpz_sub(newt, t, newt);
+        mpz_set(t, tmp);
+    }
+    if (mpz_cmp_ui(r, 1) > 0) {
+        mpz_clears(r, newr, t, newt, quotient, tmp, NULL);
+        return 0; // No inverse
+    }
+    if (mpz_cmp_ui(t, 0) < 0)
+        mpz_add(t, t, m);
+    mpz_set(rop, t);
+    mpz_clears(r, newr, t, newt, quotient, tmp, NULL);
+    return 1;
 }
 
 // Generate a random probable prime of given bits
@@ -776,7 +784,7 @@ void rsa_generate_keypair(rsa_public_key *pub, rsa_private_key *priv, int bits) 
 
   // d = e^{-1} mod phi
   mpz_init(priv->d);
-  if (!__unlikely(modinv(priv->d, priv->e, phi))) {
+  if (!__unlikely(extended_gcd_modinv(priv->d, priv->e, phi))) {
     ERROR("rsa_generate_keypair: No modular inverse for 'e' (should not happen)");
     mpz_clears(p, q, phi, dP, dQ, qInv, priv->d, priv->e, priv->n, NULL);
     gmp_randclear(state);
@@ -801,7 +809,7 @@ void rsa_generate_keypair(rsa_public_key *pub, rsa_private_key *priv, int bits) 
   mpz_mod(priv->dQ, priv->d, dQ);
 
   mpz_init(qInv);
-  if(!__unlikely(modinv(qInv, priv->q, priv->p))) {
+  if(!__unlikely(extended_gcd_modinv(qInv, priv->q, priv->p))) {
     ERROR("rsa_generate_keypair: No modular inverse for qInv");
     mpz_clears(p, q, phi, dP, dQ, qInv, priv->d, priv->e, priv->n, priv->p, priv->q, priv->dP, priv->dQ, NULL);
     gmp_randclear(state);
