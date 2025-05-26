@@ -16,6 +16,8 @@ This RSA implementation now includes enhanced security features:
 - **Constant-Time Decoding**: OAEP decoding avoids timing leaks, protecting against **side-channel attacks**.
 - RSA **Blinding**: Decryption uses **blinding** to prevent **timing** and **power analysis attacks**.
 
+In terms of improvements, the C code in `/C/rsa.h` file is a better choice.
+
 These updates make RSA encryption and decryption in this project significantly more secure against modern cryptographic and side-channel threats.
 
 ---
